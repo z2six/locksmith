@@ -1,18 +1,15 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/render/profile/LockTargetType.java
 package org.z2six.locksmith.render.profile;
 
-import org.slf4j.Logger;
-import org.z2six.locksmith.Constants;
-
 /**
- * What kind of lockable target a profile applies to.
- * We start with DOOR now, later we'll add CHEST logic without changing the wire format.
+ * What kind of block the lock is attached to.
+ * Currently only DOOR is actually used in DoorLockRenderer, but the type is
+ * serialized to forwards-compat future targets (chests, etc.).
  */
 public enum LockTargetType {
-    DOOR((byte) 1),
-    CHEST((byte) 2);
-
-    private static final Logger LOG = Constants.LOG;
+    DOOR((byte) 0),
+    CHEST((byte) 1),
+    GENERIC((byte) 2);
 
     public final byte id;
 
@@ -24,27 +21,16 @@ public enum LockTargetType {
         for (LockTargetType t : values()) {
             if (t.id == id) return t;
         }
-        LOG.warn("[Locksmith][LockTargetType] Unknown type id={} - defaulting to DOOR", id);
         return DOOR;
     }
 
     public static LockTargetType fromString(String s) {
         if (s == null) return DOOR;
-        String v = s.trim().toLowerCase();
-        return switch (v) {
+        String lower = s.trim().toLowerCase();
+        return switch (lower) {
             case "door" -> DOOR;
             case "chest" -> CHEST;
-            default -> {
-                LOG.warn("[Locksmith][LockTargetType] Unknown type string='{}' - defaulting to DOOR", s);
-                yield DOOR;
-            }
-        };
-    }
-
-    public String toConfigString() {
-        return switch (this) {
-            case DOOR -> "door";
-            case CHEST -> "chest";
+            default -> GENERIC;
         };
     }
 }

@@ -1,6 +1,7 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/event/LocksmithDoorEvents.java
 package org.z2six.locksmith.event;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -15,12 +16,13 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.util.TriState;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ExplosionEvent;
-import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
@@ -31,8 +33,10 @@ import org.z2six.locksmith.network.AddDoorLockPayload;
 import org.z2six.locksmith.network.LockDoorPayload;
 import org.z2six.locksmith.network.RemoveDoorLockPayload;
 import org.z2six.locksmith.network.SyncDoorLocksPayload;
+import org.z2six.locksmith.network.SyncLockRenderProfilesPayload;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
+import org.z2six.locksmith.render.profile.ServerLockRenderProfiles;
 import org.z2six.locksmith.world.DoorLockSavedData;
 
 import java.util.HashMap;
@@ -43,7 +47,6 @@ public final class LocksmithDoorEvents {
     private static final Logger LOG = Constants.LOG;
 
     private static final Map<String, Long> DENY_THROTTLE = new HashMap<>();
-
     private static final int CLEANUP_EVERY_TICKS = 200;
     private static final int CLEANUP_MAX_CHECK_PER_PASS = 512;
 
@@ -57,17 +60,18 @@ public final class LocksmithDoorEvents {
 
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         try {
-            // Ensure the JSON config exists the first time someone logs in.
+            // Still ensure the file exists, so users always get a template.
             LockProfileConfig.ensureDefaultFileExists();
 
             if (!(event.getEntity() instanceof ServerPlayer sp)) return;
             ServerLevel level = sp.serverLevel();
 
+            // 1) Door-lock state sync (unchanged)
             DoorLockSavedData data = DoorLockSavedData.get(level);
             data.cleanupInvalidDoors(level, CLEANUP_MAX_CHECK_PER_PASS);
 
             Map<Long, String> snap = data.snapshotLocks();
-            var map = new Long2ObjectOpenHashMap<String>(snap.size());
+            Long2ObjectOpenHashMap<String> map = new Long2ObjectOpenHashMap<>(snap.size());
             for (Map.Entry<Long, String> e : snap.entrySet()) {
                 if (e.getValue() != null && !e.getValue().isBlank()) {
                     map.put(e.getKey(), e.getValue());
@@ -76,6 +80,26 @@ public final class LocksmithDoorEvents {
 
             PacketDistributor.sendToPlayer(sp, new SyncDoorLocksPayload(map));
             LOG.info("[Locksmith] Sent SyncDoorLocksPayload to {} (count={})", sp.getName().getString(), map.size());
+
+            // 2) SERVER-AUTHORITATIVE RENDER PROFILES
+            try {
+                var profiles = ServerLockRenderProfiles.getProfilesForNetwork();
+                if (profiles != null && !profiles.isEmpty()) {
+                    PacketDistributor.sendToPlayer(sp, new SyncLockRenderProfilesPayload(profiles));
+                    LOG.info(
+                            "[Locksmith] Sent SyncLockRenderProfilesPayload to {} (entries={})",
+                            sp.getName().getString(),
+                            profiles.size()
+                    );
+                } else {
+                    LOG.debug("[Locksmith] No lock render profiles to sync for {} (map empty).",
+                            sp.getName().getString());
+                }
+            } catch (Throwable t) {
+                LOG.error("[Locksmith] Failed to send SyncLockRenderProfilesPayload to {} (non-fatal).",
+                        sp.getName().getString(), t);
+            }
+
         } catch (Throwable t) {
             LOG.error("[Locksmith][LocksmithDoorEvents] onPlayerLoggedIn failed (non-fatal).", t);
         }
@@ -112,7 +136,11 @@ public final class LocksmithDoorEvents {
                             && held.getItem() instanceof IronKeyItem
                             && IronKeyItem.isRegistered(held)) {
 
-                        ClientDoorOpenBlocker.blockOpenForTicks(doorLong, level.getGameTime(), CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK);
+                        ClientDoorOpenBlocker.blockOpenForTicks(
+                                doorLong,
+                                level.getGameTime(),
+                                CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK
+                        );
 
                         event.setCanceled(true);
                         event.setCancellationResult(InteractionResult.SUCCESS);
@@ -245,7 +273,6 @@ public final class LocksmithDoorEvents {
         try {
             if (event == null) return;
             if (!(event.getLevel() instanceof ServerLevel level)) return;
-
             if (event.getAffectedBlocks() == null || event.getAffectedBlocks().isEmpty()) return;
 
             DoorLockSavedData data = DoorLockSavedData.get(level);
@@ -295,7 +322,7 @@ public final class LocksmithDoorEvents {
                 int removedCount = data.cleanupInvalidDoors(level, CLEANUP_MAX_CHECK_PER_PASS);
                 if (removedCount > 0) {
                     Map<Long, String> snap = data.snapshotLocks();
-                    var map = new Long2ObjectOpenHashMap<String>(snap.size());
+                    Long2ObjectOpenHashMap<String> map = new Long2ObjectOpenHashMap<>(snap.size());
                     for (Map.Entry<Long, String> e : snap.entrySet()) {
                         if (e.getValue() != null && !e.getValue().isBlank()) {
                             map.put(e.getKey(), e.getValue());

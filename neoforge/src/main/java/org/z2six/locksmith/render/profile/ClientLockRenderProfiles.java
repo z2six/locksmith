@@ -10,65 +10,65 @@ import java.util.Collections;
 import java.util.Map;
 
 /**
- * Client-side cache of render profiles received from server.
- * Purely visual; no gameplay authority.
+ * Client-side cache of lock render profiles received from the server.
+ * This is what DoorLockRenderer queries.
  */
 public final class ClientLockRenderProfiles {
 
     private static final Logger LOG = Constants.LOG;
 
-    private static final Object2ObjectOpenHashMap<ResourceLocation, LockRenderProfile> PROFILES = new Object2ObjectOpenHashMap<>();
+    private static final Object2ObjectOpenHashMap<ResourceLocation, LockRenderProfile> MAP =
+            new Object2ObjectOpenHashMap<>();
 
     private ClientLockRenderProfiles() {
     }
 
-    public static void setAll(Map<ResourceLocation, LockRenderProfile> map) {
+    public static void setAll(Map<ResourceLocation, LockRenderProfile> profiles) {
         try {
-            PROFILES.clear();
-            if (map != null && !map.isEmpty()) {
-                PROFILES.putAll(map);
+            MAP.clear();
+            if (profiles != null && !profiles.isEmpty()) {
+                MAP.putAll(profiles);
             }
-            LOG.info("[Locksmith][Client] Synced lock render profiles. count={}", PROFILES.size());
+            LOG.info("[Locksmith][ClientLockRenderProfiles] setAll: now holding {} entries.", MAP.size());
         } catch (Throwable t) {
             LOG.error("[Locksmith][ClientLockRenderProfiles] setAll failed (non-fatal).", t);
         }
     }
 
-    public static LockRenderProfile get(ResourceLocation targetId) {
+    public static LockRenderProfile get(ResourceLocation id) {
         try {
-            if (targetId == null) return null;
-            return PROFILES.get(targetId);
+            if (id == null) return null;
+            return MAP.get(id);
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientLockRenderProfiles] get failed (non-fatal).", t);
+            LOG.error("[Locksmith][ClientLockRenderProfiles] get failed (non-fatal). id={}", id, t);
             return null;
         }
     }
 
     public static int size() {
         try {
-            return PROFILES.size();
+            return MAP.size();
         } catch (Throwable t) {
+            LOG.error("[Locksmith][ClientLockRenderProfiles] size failed (non-fatal).", t);
             return 0;
         }
     }
 
     public static Map<ResourceLocation, LockRenderProfile> snapshot() {
         try {
-            return Collections.unmodifiableMap(new Object2ObjectOpenHashMap<>(PROFILES));
+            return Collections.unmodifiableMap(new Object2ObjectOpenHashMap<>(MAP));
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientLockRenderProfiles] snapshot failed (non-fatal).", t);
+            LOG.error("[Locksmith][ClientLockRenderProfiles] snapshot failed (non-fatal).", t);
             return Collections.emptyMap();
         }
     }
 
     public static void clear() {
         try {
-            if (!PROFILES.isEmpty()) {
-                LOG.info("[Locksmith][Client] Clearing lock render profiles cache (count={})", PROFILES.size());
-            }
-            PROFILES.clear();
+            MAP.clear();
+            LOG.debug("[Locksmith][ClientLockRenderProfiles] Cleared client profile cache.");
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientLockRenderProfiles] clear failed (non-fatal).", t);
+            LOG.error("[Locksmith][ClientLockRenderProfiles] clear failed (non-fatal).", t);
         }
     }
 }

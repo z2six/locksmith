@@ -5,64 +5,55 @@ import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
-import org.z2six.locksmith.render.LockRenderTuning;
 
 import java.util.Collections;
 import java.util.Map;
 
 /**
- * Server-side cache of loaded profiles from config JSON.
- * This is the authoritative source for what clients should render.
+ * Server-side holder for lock render profiles.
+ *
+ * Backed by locksmith_profiles.json (via LockRenderProfilesLoader).
+ * This is the authoritative source that we send to clients in SyncLockRenderProfilesPayload.
  */
 public final class ServerLockRenderProfiles {
 
     private static final Logger LOG = Constants.LOG;
 
-    private static final Object2ObjectOpenHashMap<ResourceLocation, LockRenderProfile> PROFILES = new Object2ObjectOpenHashMap<>();
+    // Cached copy; we always overwrite it when reloading.
+    private static Map<ResourceLocation, LockRenderProfile> CACHED = Collections.emptyMap();
 
     private ServerLockRenderProfiles() {
     }
 
-    public static void replaceAll(Map<ResourceLocation, LockRenderProfile> map) {
+    /**
+     * Load from disk and return a map suitable for network sync.
+     * Called on player login (and whenever else you want to resync).
+     */
+    public static Map<ResourceLocation, LockRenderProfile> getProfilesForNetwork() {
         try {
-            PROFILES.clear();
-            if (map != null && !map.isEmpty()) {
-                PROFILES.putAll(map);
+            Map<ResourceLocation, LockRenderProfile> loaded = LockRenderProfilesLoader.loadFromDisk();
+            if (loaded == null) {
+                loaded = Collections.emptyMap();
             }
-            LOG.info("[Locksmith][Server] Loaded lock render profiles. count={}", PROFILES.size());
-        } catch (Throwable t) {
-            LOG.error("[Locksmith][ServerLockRenderProfiles] replaceAll failed (non-fatal).", t);
-        }
-    }
 
-    public static Map<ResourceLocation, LockRenderProfile> snapshot() {
-        try {
-            return Collections.unmodifiableMap(new Object2ObjectOpenHashMap<>(PROFILES));
-        } catch (Throwable t) {
-            LOG.warn("[Locksmith][ServerLockRenderProfiles] snapshot failed (non-fatal).", t);
-            return Collections.emptyMap();
-        }
-    }
+            // Store a defensive copy for potential future use.
+            CACHED = new Object2ObjectOpenHashMap<>(loaded);
 
-    public static boolean isEmpty() {
-        try {
-            return PROFILES.isEmpty();
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("[Locksmith][ServerLockRenderProfiles] Loaded {} profile entries for network.", loaded.size());
+            }
+
+            return loaded;
         } catch (Throwable t) {
-            return true;
+            LOG.error("[Locksmith][ServerLockRenderProfiles] getProfilesForNetwork failed (non-fatal). Returning last cached map.", t);
+            return CACHED != null ? CACHED : Collections.emptyMap();
         }
     }
 
     /**
-     * Ensures we have sane defaults even if config is missing/broken.
-     * We do NOT attempt to guess all door ids; we provide fallback defaults at render time too.
+     * Optional accessor if you ever want to query server-side placement logic.
      */
-    public static LockRenderProfile defaultDoorFor(ResourceLocation blockId) {
-        return LockRenderProfile.defaultDoor(
-                blockId,
-                LockRenderTuning.OFFSET_X, LockRenderTuning.OFFSET_Y, LockRenderTuning.OFFSET_Z,
-                LockRenderTuning.ROT_X, LockRenderTuning.ROT_Y, LockRenderTuning.ROT_Z,
-                LockRenderTuning.SCALE,
-                LockRenderTuning.NUDGE_HINGE_LEFT, LockRenderTuning.NUDGE_HINGE_RIGHT
-        );
+    public static Map<ResourceLocation, LockRenderProfile> getCachedProfiles() {
+        return CACHED != null ? Collections.unmodifiableMap(CACHED) : Collections.emptyMap();
     }
 }
