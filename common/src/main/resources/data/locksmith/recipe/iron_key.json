@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "I",
+    "N",
+    "N"
+  ],
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "N": { "item": "minecraft:iron_nugget" }
+  },
+  "result": {
+    "id": "locksmith:iron_key",
+    "count": 1
+  }
+}
