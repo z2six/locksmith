@@ -3,7 +3,9 @@
   "minVersion": "0.8",
   "package": "org.z2six.locksmith.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": [],
+  "mixins": [
+    "MixinDoorBlock"
+  ],
   "client": [
     "MixinTitleScreen"
   ],

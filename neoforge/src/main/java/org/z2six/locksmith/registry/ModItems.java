@@ -11,9 +11,6 @@ import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.item.IronKeyItem;
 
-/**
- * NeoForge-side item registry.
- */
 public final class ModItems {
 
     private static final Logger LOG = Constants.LOG;
@@ -21,7 +18,6 @@ public final class ModItems {
     public static final DeferredRegister<Item> ITEMS =
             DeferredRegister.create(Registries.ITEM, Constants.MOD_ID);
 
-    // Player-visible item
     public static final DeferredHolder<Item, Item> KEY_IRON = ITEMS.register("iron_key", () ->
             new IronKeyItem(new Item.Properties()
                     .stacksTo(1)
@@ -29,7 +25,6 @@ public final class ModItems {
             )
     );
 
-    // Internal render-only item (NOT added to creative, no recipe). Uses your lock_iron model JSON.
     public static final DeferredHolder<Item, Item> LOCK_IRON = ITEMS.register("lock_iron", () ->
             new Item(new Item.Properties()
                     .stacksTo(64)
@@ -38,18 +33,60 @@ public final class ModItems {
     );
 
     private ModItems() {
-        // no instances
     }
 
+    /**
+     * Safe debug helper.
+     *
+     * NeoForge DeferredHolders can be unbound during early mod construction.
+     * Accessing .get() too early throws (or NPEs) and spams logs.
+     */
     public static void debugLogRegisteredItemsSafe() {
         try {
+            if (!isBoundSafe(KEY_IRON) || !isBoundSafe(LOCK_IRON)) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][ModItems] debugLogRegisteredItemsSafe: DeferredHolders not bound yet; skipping.");
+                }
+                return;
+            }
+
             Item key = KEY_IRON.get();
             Item lock = LOCK_IRON.get();
+
             LOG.debug("[Locksmith][ModItems] Registered items OK: iron_key={}, lock_iron={}",
                     safeItemName(new ItemStack(key)),
                     safeItemName(new ItemStack(lock)));
+
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ModItems] debugLogRegisteredItemsSafe failed (non-fatal).", t);
+            // Keep it non-fatal and non-spammy.
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("[Locksmith][ModItems] debugLogRegisteredItemsSafe skipped due to early registry state (non-fatal).", t);
+            }
+        }
+    }
+
+    private static boolean isBoundSafe(Object holder) {
+        try {
+            if (!(holder instanceof DeferredHolder<?, ?> dh)) return false;
+
+            // Newer NeoForge has isBound(). If not, reflection will fail and we fallback.
+            try {
+                var m = dh.getClass().getMethod("isBound");
+                Object res = m.invoke(dh);
+                if (res instanceof Boolean b) return b;
+            } catch (Throwable ignored) {
+                // fallback below
+            }
+
+            // Fallback: try get() in a controlled way; if it throws, it's not bound yet.
+            try {
+                dh.get();
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
+        } catch (Throwable t) {
+            return false;
         }
     }
 

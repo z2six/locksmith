@@ -1,6 +1,7 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/Locksmith.java
 package org.z2six.locksmith;
 
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
@@ -41,16 +42,22 @@ public class Locksmith {
             LOG.error("[Locksmith] FAILED to register creative tab listener (non-fatal).", t);
         }
 
-        // Server-authoritative gameplay events
         try {
-            NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onRightClickBlock);
+            // IMPORTANT: priority HIGHEST so we can deny door toggling before anything else opens it.
+            NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithDoorEvents::onRightClickBlock);
+
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onPlayerLoggedIn);
-            LOG.info("[Locksmith] Registered door lock gameplay events.");
+
+            // Cleanup hooks:
+            NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onBlockBreak);
+            NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onExplosionDetonate);
+            NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onServerTick);
+
+            LOG.info("[Locksmith] Registered door lock gameplay events (and cleanup hooks).");
         } catch (Throwable t) {
             LOG.error("[Locksmith] FAILED to register gameplay events (this is bad).", t);
         }
 
-        // Client-only init via reflection to avoid server classloading issues
         try {
             if (FMLEnvironment.dist.isClient()) {
                 Class<?> clazz = Class.forName("org.z2six.locksmith.client.ClientInit");

@@ -1,13 +1,16 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/world/DoorLockSavedData.java
 package org.z2six.locksmith.world;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
-import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 
@@ -18,35 +21,27 @@ import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /**
- * Per-dimension SavedData: stores door locks keyed by BlockPos.asLong() -> hash hex string.
- * Persists across server restarts.
+ * Stores door locks per-dimension.
  *
- * MC 1.21+ note:
- * - save(...) signature requires HolderLookup.Provider
- * - Factory loader signature takes (CompoundTag, HolderLookup.Provider)
+ * Key: BlockPos.asLong() (normalized to LOWER half position)
+ * Value: required hash (hex string)
  */
 public class DoorLockSavedData extends SavedData {
 
     private static final Logger LOG = Constants.LOG;
 
-    private static final String NAME = Constants.MOD_ID + "_door_locks";
+    private static final String NAME = "locksmith_door_locks";
     private static final String TAG_LOCKS = "Locks";
     private static final String TAG_POS = "Pos";
     private static final String TAG_HASH = "Hash";
 
-    // posLong -> hash
-    private final Map<Long, String> locks = new HashMap<>();
+    private final Long2ObjectOpenHashMap<String> locks = new Long2ObjectOpenHashMap<>();
 
     public DoorLockSavedData() {
-        // empty
     }
 
-    /**
-     * Get/create the SavedData for this dimension.
-     */
     public static DoorLockSavedData get(ServerLevel level) {
         try {
-            // Explicit generics to avoid "cannot infer type arguments" on newer mappings.
             Supplier<DoorLockSavedData> constructor = DoorLockSavedData::new;
             BiFunction<CompoundTag, HolderLookup.Provider, DoorLockSavedData> loader = DoorLockSavedData::load;
 
@@ -56,14 +51,10 @@ public class DoorLockSavedData extends SavedData {
         } catch (Throwable t) {
             LOG.error("[Locksmith][DoorLockSavedData] Failed to get SavedData for level {}.",
                     (level == null ? "null" : level.dimension().location()), t);
-            // Fallback: non-persisting instance to avoid crashes
             return new DoorLockSavedData();
         }
     }
 
-    /**
-     * Loader for 1.21+ SavedData Factory.
-     */
     public static DoorLockSavedData load(CompoundTag tag, HolderLookup.Provider provider) {
         DoorLockSavedData data = new DoorLockSavedData();
         try {
@@ -86,19 +77,17 @@ public class DoorLockSavedData extends SavedData {
         return data;
     }
 
-    /**
-     * Save hook for 1.21+.
-     */
     @Override
     public CompoundTag save(CompoundTag tag, HolderLookup.Provider provider) {
         try {
             ListTag list = new ListTag();
-            for (Map.Entry<Long, String> en : locks.entrySet()) {
+            for (var en : locks.long2ObjectEntrySet()) {
+                long pos = en.getLongKey();
                 String hash = en.getValue();
                 if (hash == null || hash.isBlank()) continue;
 
                 CompoundTag e = new CompoundTag();
-                e.putLong(TAG_POS, en.getKey());
+                e.putLong(TAG_POS, pos);
                 e.putString(TAG_HASH, hash);
                 list.add(e);
             }
@@ -114,9 +103,18 @@ public class DoorLockSavedData extends SavedData {
         return locks.containsKey(pos.asLong());
     }
 
+    public boolean isLockedLong(long posLong) {
+        return locks.containsKey(posLong);
+    }
+
     public String getHash(BlockPos pos) {
         if (pos == null) return "";
         String v = locks.get(pos.asLong());
+        return v == null ? "" : v;
+    }
+
+    public String getHashLong(long posLong) {
+        String v = locks.get(posLong);
         return v == null ? "" : v;
     }
 
@@ -139,9 +137,80 @@ public class DoorLockSavedData extends SavedData {
         }
     }
 
+    public boolean removeLock(BlockPos pos) {
+        try {
+            if (pos == null) return false;
+            long key = pos.asLong();
+            return removeLockLong(key);
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockSavedData] removeLock failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    public boolean removeLockLong(long posLong) {
+        try {
+            String removed = locks.remove(posLong);
+            if (removed != null) {
+                setDirty();
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockSavedData] Removed door lock at posLong={} hashLen={}", posLong, removed.length());
+                } else {
+                    LOG.info("[Locksmith][DoorLockSavedData] Removed door lock at posLong={}", posLong);
+                }
+                return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockSavedData] removeLockLong failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    /**
+     * Hard cleanup pass: removes any lock entries whose block is no longer a door.
+     * This guarantees stale locks won't survive weird removals (explosions, /setblock, modded block swaps, etc).
+     *
+     * @return number of removed entries
+     */
+    public int cleanupInvalidDoors(ServerLevel level, int maxToCheck) {
+        int removedCount = 0;
+        try {
+            if (level == null) return 0;
+            if (locks.isEmpty()) return 0;
+
+            int checked = 0;
+
+            // Iterate over snapshot keys to avoid concurrent modification issues.
+            long[] keys = locks.keySet().toLongArray();
+            for (long posLong : keys) {
+                if (maxToCheck > 0 && checked >= maxToCheck) break;
+                checked++;
+
+                BlockPos pos = BlockPos.of(posLong);
+                BlockState st = level.getBlockState(pos);
+                if (!(st.getBlock() instanceof DoorBlock)) {
+                    boolean did = removeLockLong(posLong);
+                    if (did) removedCount++;
+                }
+            }
+
+            if (removedCount > 0) {
+                LOG.info("[Locksmith][DoorLockSavedData] Cleanup removed {} stale lock(s). checked={}", removedCount, checked);
+            }
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockSavedData] cleanupInvalidDoors failed (non-fatal).", t);
+        }
+        return removedCount;
+    }
+
     public Map<Long, String> snapshotLocks() {
         try {
-            return Collections.unmodifiableMap(new HashMap<>(locks));
+            HashMap<Long, String> m = new HashMap<>();
+            for (var en : locks.long2ObjectEntrySet()) {
+                m.put(en.getLongKey(), en.getValue());
+            }
+            return Collections.unmodifiableMap(m);
         } catch (Throwable t) {
             LOG.warn("[Locksmith][DoorLockSavedData] snapshotLocks failed (non-fatal).", t);
             return Collections.emptyMap();

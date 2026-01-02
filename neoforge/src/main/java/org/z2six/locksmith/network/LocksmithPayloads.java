@@ -1,19 +1,18 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/network/LocksmithPayloads.java
 package org.z2six.locksmith.network;
 
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 
 /**
- * NeoForge payload registration.
+ * Registers all custom payloads (C2S + S2C).
  */
 public final class LocksmithPayloads {
 
     private static final Logger LOG = Constants.LOG;
 
     private LocksmithPayloads() {
-        // no-op
     }
 
     public static void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
@@ -26,6 +25,11 @@ public final class LocksmithPayloads {
                     RegisterIronKeyPayload.STREAM_CODEC,
                     RegisterIronKeyPayload::handle
             );
+            registrar.playToServer(
+                    LockDoorPayload.TYPE,
+                    LockDoorPayload.STREAM_CODEC,
+                    LockDoorPayload::handle
+            );
 
             // S2C
             registrar.playToClient(
@@ -37,6 +41,11 @@ public final class LocksmithPayloads {
                     AddDoorLockPayload.TYPE,
                     AddDoorLockPayload.STREAM_CODEC,
                     AddDoorLockPayload::handle
+            );
+            registrar.playToClient(
+                    RemoveDoorLockPayload.TYPE,
+                    RemoveDoorLockPayload.STREAM_CODEC,
+                    RemoveDoorLockPayload::handle
             );
 
             LOG.info("[Locksmith] Registered payload handlers.");

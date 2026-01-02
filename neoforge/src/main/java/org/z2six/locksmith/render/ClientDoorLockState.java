@@ -1,17 +1,15 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/render/ClientDoorLockState.java
 package org.z2six.locksmith.render;
 
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 /**
- * Client-only: stores locked door positions + their required hash for the current dimension.
- * We store posLong -> hashHex so client can prevent door-open prediction flicker.
- *
- * Later: chunk-index and dimension-separate.
+ * Client-side cache of locked door positions -> required hash.
+ * This is purely render/UX state; server remains authoritative.
  */
 public final class ClientDoorLockState {
 
@@ -20,12 +18,10 @@ public final class ClientDoorLockState {
     private static final Long2ObjectOpenHashMap<String> LOCKED = new Long2ObjectOpenHashMap<>();
 
     private ClientDoorLockState() {
-        // no-op
     }
 
     public static Long2ObjectMap<String> getSnapshot() {
         try {
-            // Unmodifiable view to avoid accidental modifications during render
             return Long2ObjectMaps.unmodifiable(LOCKED);
         } catch (Throwable t) {
             LOG.warn("[Locksmith][ClientDoorLockState] getSnapshot failed (non-fatal).", t);
@@ -69,6 +65,14 @@ public final class ClientDoorLockState {
             LOCKED.put(posLong, hash);
         } catch (Throwable t) {
             LOG.error("[Locksmith][ClientDoorLockState] put failed (non-fatal).", t);
+        }
+    }
+
+    public static void remove(long posLong) {
+        try {
+            LOCKED.remove(posLong);
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][ClientDoorLockState] remove failed (non-fatal).", t);
         }
     }
 }
