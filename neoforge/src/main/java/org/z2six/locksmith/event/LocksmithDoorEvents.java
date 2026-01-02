@@ -1,9 +1,7 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/event/LocksmithDoorEvents.java
 package org.z2six.locksmith.event;
 
-import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -29,6 +27,7 @@ import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.DoorLockManager;
 import org.z2six.locksmith.network.*;
 import org.z2six.locksmith.render.ClientDoorLockState;
+import org.z2six.locksmith.render.ClientDoorOpenBlocker;
 import org.z2six.locksmith.world.DoorLockSavedData;
 
 import java.util.HashMap;
@@ -43,10 +42,11 @@ public final class LocksmithDoorEvents {
     private static final int CLEANUP_EVERY_TICKS = 200;
     private static final int CLEANUP_MAX_CHECK_PER_PASS = 512;
 
-    // How many ticks we "slam shut" after locking.
-    private static final int FORCE_CLOSE_AFTER_LOCK_TICKS = 5;
+    // This is ONLY for client prediction suppression when placing a lock.
+    private static final int CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK = 6;
 
-    // How many queued closes we process per tick per level.
+    // Server-side "slam shut" safety net you already saw working.
+    private static final int FORCE_CLOSE_AFTER_LOCK_TICKS = 5;
     private static final int FORCE_CLOSE_MAX_PER_TICK = 256;
 
     private LocksmithDoorEvents() {
@@ -61,7 +61,6 @@ public final class LocksmithDoorEvents {
             data.cleanupInvalidDoors(level, CLEANUP_MAX_CHECK_PER_PASS);
 
             Map<Long, String> snap = data.snapshotLocks();
-
             Long2ObjectOpenHashMap<String> map = new Long2ObjectOpenHashMap<>(snap.size());
             for (Map.Entry<Long, String> e : snap.entrySet()) {
                 if (e.getValue() != null && !e.getValue().isBlank()) {
@@ -99,22 +98,30 @@ public final class LocksmithDoorEvents {
             // CLIENT-SIDE BEHAVIOR
             // -----------------------
             if (level.isClientSide) {
-                long keyLong = doorPos.asLong();
+                long doorLong = doorPos.asLong();
 
-                // If door is NOT locked, and player holds a REGISTERED key -> EAT interaction + send payload.
-                if (!ClientDoorLockState.isLocked(keyLong)
+                // (Optional) opportunistic cleanup
+                ClientDoorOpenBlocker.cleanupExpired(level.getGameTime(), 64);
+
+                // If NOT locked, and holding registered key -> EAT + block predicted open + send payload.
+                if (!ClientDoorLockState.isLocked(doorLong)
                         && event.getHand() == InteractionHand.MAIN_HAND) {
 
                     ItemStack held = player.getItemInHand(InteractionHand.MAIN_HAND);
-                    if (held != null && !held.isEmpty() && held.getItem() instanceof IronKeyItem && IronKeyItem.isRegistered(held)) {
-                        // Cancel first, deny vanilla first, then send payload.
+                    if (held != null && !held.isEmpty()
+                            && held.getItem() instanceof IronKeyItem
+                            && IronKeyItem.isRegistered(held)) {
+
+                        // IMPORTANT: block the open prediction window BEFORE anything else.
+                        ClientDoorOpenBlocker.blockOpenForTicks(doorLong, level.getGameTime(), CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK);
+
                         event.setCanceled(true);
                         event.setCancellationResult(InteractionResult.SUCCESS);
                         safeDenyVanillaUse(event);
 
                         try {
-                            PacketDistributor.sendToServer(new LockDoorPayload(keyLong));
-                            LOG.debug("[Locksmith][Client] Lock attempt: ate interaction and sent LockDoorPayload for pos={}", doorPos);
+                            PacketDistributor.sendToServer(new LockDoorPayload(doorLong));
+                            LOG.debug("[Locksmith][Client] Lock click ate interaction and sent LockDoorPayload pos={}", doorPos);
                         } catch (Throwable t) {
                             LOG.error("[Locksmith][Client] Failed to send LockDoorPayload (non-fatal).", t);
                         }
@@ -122,9 +129,9 @@ public final class LocksmithDoorEvents {
                     }
                 }
 
-                // If door IS locked, deny open when no matching key.
-                if (ClientDoorLockState.isLocked(keyLong)) {
-                    String requiredHash = ClientDoorLockState.getRequiredHash(keyLong);
+                // If locked, deny when no key (already-working path).
+                if (ClientDoorLockState.isLocked(doorLong)) {
+                    String requiredHash = ClientDoorLockState.getRequiredHash(doorLong);
                     if (requiredHash != null && !requiredHash.isBlank()) {
                         boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
                         if (!hasKey) {
@@ -149,7 +156,6 @@ public final class LocksmithDoorEvents {
 
             DoorLockSavedData data = DoorLockSavedData.get(sLevel);
 
-            // Cleanup: if door gone, remove lock record.
             if (!(sLevel.getBlockState(doorPos).getBlock() instanceof DoorBlock)) {
                 boolean removed = data.removeLock(doorPos);
                 if (removed) {
@@ -160,19 +166,18 @@ public final class LocksmithDoorEvents {
 
             boolean isLocked = data.isLocked(doorPos);
 
-            // If NOT locked and holding REGISTERED key -> EAT interaction (do not toggle door) + lock it.
             if (!isLocked && event.getHand() == InteractionHand.MAIN_HAND) {
                 ItemStack held = sp.getItemInHand(InteractionHand.MAIN_HAND);
-                if (held != null && !held.isEmpty() && held.getItem() instanceof IronKeyItem && IronKeyItem.isRegistered(held)) {
+                if (held != null && !held.isEmpty()
+                        && held.getItem() instanceof IronKeyItem
+                        && IronKeyItem.isRegistered(held)) {
 
-                    // Cancel FIRST. This must behave like the "deny" path: it *consumes* the click.
                     event.setCanceled(true);
                     event.setCancellationResult(InteractionResult.SUCCESS);
                     safeDenyVanillaUse(event);
 
                     boolean added = DoorLockManager.tryLockDoorWithHeldKey(sLevel, sp, doorPos, held);
 
-                    // Immediately close, and also queue close for several ticks to beat any race.
                     DoorLockManager.forceCloseDoor(sLevel, doorPos);
                     DoorLockManager.requestForceClose(sLevel, doorPos, FORCE_CLOSE_AFTER_LOCK_TICKS);
 
@@ -190,7 +195,6 @@ public final class LocksmithDoorEvents {
                 }
             }
 
-            // If locked, deny open when no matching key (this already worked for you; keep it).
             if (data.isLocked(doorPos)) {
                 String requiredHash = data.getHash(doorPos);
                 if (requiredHash == null || requiredHash.isBlank()) {
@@ -281,12 +285,10 @@ public final class LocksmithDoorEvents {
             var server = event.getServer();
             if (server == null) return;
 
-            // First: enforce queued force-closes every tick (per level).
             for (ServerLevel level : server.getAllLevels()) {
                 DoorLockManager.tickForceClose(level, FORCE_CLOSE_MAX_PER_TICK);
             }
 
-            // Then: cleanup/resync periodically.
             long gameTime = server.overworld().getGameTime();
             if (gameTime % CLEANUP_EVERY_TICKS != 0) return;
 

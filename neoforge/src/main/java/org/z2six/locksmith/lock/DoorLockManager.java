@@ -2,7 +2,6 @@
 package org.z2six.locksmith.lock;
 
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
-import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -134,16 +133,46 @@ public final class DoorLockManager {
         }
     }
 
+    /**
+     * Server-authoritative close (writes to world).
+     */
     public static void forceCloseDoor(ServerLevel level, BlockPos doorLowerPos) {
         try {
             if (level == null || doorLowerPos == null) return;
+            forceCloseDoorAnyLevel(level, doorLowerPos, "[Server]");
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockManager] forceCloseDoor failed (non-fatal).", t);
+        }
+    }
 
+    /**
+     * Client-visual close (writes to client world, purely to prevent flicker).
+     *
+     * This is safe because:
+     * - We ONLY call it when level.isClientSide == true
+     * - Server will still correct state authoritatively if needed
+     */
+    public static void forceCloseDoorClient(Level level, BlockPos doorLowerPos) {
+        try {
+            if (level == null || doorLowerPos == null) return;
+            if (!level.isClientSide) return; // paranoia: never touch server world here.
+            forceCloseDoorAnyLevel(level, doorLowerPos, "[ClientVisual]");
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockManager] forceCloseDoorClient failed (non-fatal).", t);
+        }
+    }
+
+    private static void forceCloseDoorAnyLevel(Level level, BlockPos doorLowerPos, String tag) {
+        try {
             BlockState lower = level.getBlockState(doorLowerPos);
             if (!(lower.getBlock() instanceof DoorBlock)) return;
+
+            boolean changed = false;
 
             if (lower.hasProperty(DoorBlock.OPEN) && lower.getValue(DoorBlock.OPEN)) {
                 BlockState closedLower = lower.setValue(DoorBlock.OPEN, false);
                 level.setBlock(doorLowerPos, closedLower, 3);
+                changed = true;
             }
 
             BlockPos upperPos = doorLowerPos.above();
@@ -152,16 +181,17 @@ public final class DoorLockManager {
                 if (upper.hasProperty(DoorBlock.OPEN) && upper.getValue(DoorBlock.OPEN)) {
                     BlockState closedUpper = upper.setValue(DoorBlock.OPEN, false);
                     level.setBlock(upperPos, closedUpper, 3);
+                    changed = true;
                 }
             }
 
-            if (LOG.isDebugEnabled() && (level.getGameTime() % 20 == 0)) {
+            if (changed && LOG.isDebugEnabled() && (level.getGameTime() % 10 == 0)) {
                 Direction facing = lower.hasProperty(DoorBlock.FACING) ? lower.getValue(DoorBlock.FACING) : Direction.NORTH;
-                LOG.debug("[Locksmith][DoorLockManager] forceCloseDoor applied at {} facing={}", doorLowerPos, facing);
+                LOG.debug("[Locksmith][DoorLockManager] {} forceCloseDoor applied at {} facing={}", tag, doorLowerPos, facing);
             }
 
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][DoorLockManager] forceCloseDoor failed (non-fatal).", t);
+            LOG.warn("[Locksmith][DoorLockManager] forceCloseDoorAnyLevel failed (non-fatal). tag={}", tag, t);
         }
     }
 
