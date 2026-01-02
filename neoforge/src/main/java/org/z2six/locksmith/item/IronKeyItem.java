@@ -19,17 +19,19 @@ import java.util.List;
 
 /**
  * Iron Key:
- * - Tooltip shows either "Unregistered" or "Registered"
- * - Tooltip also shows "Tools & Utilities" (as requested)
+ * - Tooltip:
+ *    - Unregistered -> "Unregistered"
+ *    - Registered -> "Registered by: <name>"
  * - RMB while held in MAIN hand opens registration GUI (client-side only) if unregistered.
  *
- * Important: dedicated server safe (no direct client class references).
+ * Dedicated server safe: no direct client class references.
  */
 public class IronKeyItem extends Item {
 
     private static final Logger LOG = Constants.LOG;
 
     public static final String DATA_KEY_HASH = "LocksmithKeyHash";
+    public static final String DATA_REGISTERED_BY = "LocksmithRegisteredBy";
     public static final int MAX_PASSPHRASE_LEN = 64;
 
     private static final String CLIENT_SCREEN_CLASS = "org.z2six.locksmith.client.screen.IronKeyRegisterScreen";
@@ -46,24 +48,23 @@ public class IronKeyItem extends Item {
         return ItemStackDataUtil.getString(stack, DATA_KEY_HASH);
     }
 
+    public static String getRegisteredByOrEmpty(ItemStack stack) {
+        return ItemStackDataUtil.getString(stack, DATA_REGISTERED_BY);
+    }
+
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext ctx, List<Component> tooltip, TooltipFlag flag) {
         super.appendHoverText(stack, ctx, tooltip, flag);
 
         try {
-            // Per your request: show creative tab name line.
-            // Minecraft does not normally show this in tooltips, so we add it ourselves.
-            tooltip.add(Component.translatable("tooltip.locksmith.tools_and_utilities")
-                    .withStyle(ChatFormatting.DARK_GRAY));
-
             if (!isRegistered(stack)) {
-                tooltip.add(Component.translatable("tooltip.locksmith.unregistered")
-                        .withStyle(ChatFormatting.GRAY));
-                LOG.debug("[Locksmith][IronKeyItem] Tooltip: Unregistered");
+                tooltip.add(Component.translatable("tooltip.locksmith.unregistered").withStyle(ChatFormatting.GRAY));
             } else {
-                tooltip.add(Component.translatable("tooltip.locksmith.registered")
-                        .withStyle(ChatFormatting.GREEN));
-                LOG.debug("[Locksmith][IronKeyItem] Tooltip: Registered");
+                String by = getRegisteredByOrEmpty(stack);
+                if (by == null || by.isBlank()) {
+                    by = "?";
+                }
+                tooltip.add(Component.translatable("tooltip.locksmith.registered_by", by).withStyle(ChatFormatting.GREEN));
             }
         } catch (Throwable t) {
             LOG.warn("[Locksmith][IronKeyItem] appendHoverText failed (non-fatal).", t);

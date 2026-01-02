@@ -18,14 +18,25 @@ public final class LocksmithPayloads {
 
     public static void onRegisterPayloadHandlers(RegisterPayloadHandlersEvent event) {
         try {
-            // "1" is your network protocol version for this payload group.
-            // Bump when you make breaking network changes later.
             final var registrar = event.registrar(Constants.MOD_ID).versioned("1");
 
+            // C2S
             registrar.playToServer(
                     RegisterIronKeyPayload.TYPE,
                     RegisterIronKeyPayload.STREAM_CODEC,
                     RegisterIronKeyPayload::handle
+            );
+
+            // S2C
+            registrar.playToClient(
+                    SyncDoorLocksPayload.TYPE,
+                    SyncDoorLocksPayload.STREAM_CODEC,
+                    SyncDoorLocksPayload::handle
+            );
+            registrar.playToClient(
+                    AddDoorLockPayload.TYPE,
+                    AddDoorLockPayload.STREAM_CODEC,
+                    AddDoorLockPayload::handle
             );
 
             LOG.info("[Locksmith] Registered payload handlers.");

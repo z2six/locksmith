@@ -24,7 +24,6 @@ public final class ModCreativeTabs {
                 LOG.debug("[Locksmith][CreativeTabs] Added Iron Key to TOOLS_AND_UTILITIES.");
             }
         } catch (Throwable t) {
-            // Defensive: never crash creative build.
             LOG.warn("[Locksmith][CreativeTabs] Failed to add items to creative tab (non-fatal).", t);
         }
     }

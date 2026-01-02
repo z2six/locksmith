@@ -19,8 +19,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * C2S payload: register the iron key in the player's MAIN hand.
- * Server computes SHA-256 FIRST, then stores as hex string into CustomData under IronKeyItem.DATA_KEY_HASH.
+ * C2S: register the iron key in the player's MAIN hand.
+ * Server computes SHA-256 FIRST, then stores:
+ *  - LocksmithKeyHash
+ *  - LocksmithRegisteredBy
+ * in CustomData.
  */
 public record RegisterIronKeyPayload(String passphrase) implements CustomPacketPayload {
 
@@ -75,7 +78,6 @@ public record RegisterIronKeyPayload(String passphrase) implements CustomPacketP
                 pass = pass.substring(0, IronKeyItem.MAX_PASSPHRASE_LEN);
             }
 
-            // Must be holding the iron key in MAIN hand
             ItemStack stack = player.getItemInHand(InteractionHand.MAIN_HAND);
             if (stack == null || stack.isEmpty()) {
                 LOG.debug("[Locksmith][RegisterIronKeyPayload] Player {} main-hand empty; ignoring.",
@@ -89,14 +91,13 @@ public record RegisterIronKeyPayload(String passphrase) implements CustomPacketP
                 return;
             }
 
-            // If already registered, do nothing.
             if (IronKeyItem.isRegistered(stack)) {
                 LOG.debug("[Locksmith][RegisterIronKeyPayload] Player {} iron_key already registered; ignoring.",
                         player.getName().getString());
                 return;
             }
 
-            // Compute SHA-256 FIRST (as requested)
+            // Compute SHA-256 FIRST
             String hashHex = sha256Hex(pass);
             if (hashHex == null || hashHex.isBlank()) {
                 LOG.warn("[Locksmith][RegisterIronKeyPayload] sha256Hex returned blank for player {} (non-fatal).",
@@ -104,15 +105,15 @@ public record RegisterIronKeyPayload(String passphrase) implements CustomPacketP
                 return;
             }
 
-            // Store into CustomData (1.21+)
-            boolean wrote = ItemStackDataUtil.putString(stack, IronKeyItem.DATA_KEY_HASH, hashHex);
-            if (!wrote) {
-                LOG.error("[Locksmith][RegisterIronKeyPayload] Failed writing CustomData for player {} (non-fatal).",
-                        player.getName().getString());
+            boolean wroteHash = ItemStackDataUtil.putString(stack, IronKeyItem.DATA_KEY_HASH, hashHex);
+            boolean wroteBy = ItemStackDataUtil.putString(stack, IronKeyItem.DATA_REGISTERED_BY, player.getName().getString());
+
+            if (!wroteHash || !wroteBy) {
+                LOG.error("[Locksmith][RegisterIronKeyPayload] Failed writing CustomData for player {} (non-fatal). wroteHash={}, wroteBy={}",
+                        player.getName().getString(), wroteHash, wroteBy);
                 return;
             }
 
-            // Force inventory sync defensively
             try {
                 player.setItemInHand(InteractionHand.MAIN_HAND, stack);
                 player.getInventory().setChanged();
@@ -121,8 +122,8 @@ public record RegisterIronKeyPayload(String passphrase) implements CustomPacketP
                         player.getName().getString(), t);
             }
 
-            LOG.info("[Locksmith] Registered iron_key for player {} (stored SHA-256 hex, len={}).",
-                    player.getName().getString(), hashHex.length());
+            LOG.info("[Locksmith] Registered iron_key for player {} (stored SHA-256 hex, len=64).",
+                    player.getName().getString());
 
         } catch (Throwable t) {
             LOG.error("[Locksmith][RegisterIronKeyPayload] Server handler failed (non-fatal). player={}",

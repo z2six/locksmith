@@ -17,7 +17,9 @@ import org.z2six.locksmith.network.RegisterIronKeyPayload;
  * Simple registration GUI:
  * "Secret passphrase:" + textbox (max 64) + Confirm button.
  *
- * Fix: draw text AFTER super.render and at high Z so menu blur never covers it.
+ * Fixes:
+ * - Proper initial focus on the EditBox (no double-click required)
+ * - Draws text after widgets at high Z (so blur never hides it)
  */
 public class IronKeyRegisterScreen extends Screen {
 
@@ -52,13 +54,18 @@ public class IronKeyRegisterScreen extends Screen {
             );
             this.passphraseBox.setMaxLength(IronKeyItem.MAX_PASSPHRASE_LEN);
             this.passphraseBox.setValue("");
-            this.passphraseBox.setFocused(true);
+            this.passphraseBox.setCanLoseFocus(false);
             this.addRenderableWidget(this.passphraseBox);
 
             this.confirmButton = Button.builder(Component.literal("Confirm"), btn -> onConfirmPressed())
                     .bounds(cx - 50, btnY, 100, 20)
                     .build();
             this.addRenderableWidget(this.confirmButton);
+
+            // ---- Focus fixes ----
+            this.setInitialFocus(this.passphraseBox);
+            this.setFocused(this.passphraseBox);
+            this.passphraseBox.setFocused(true);
 
             updateConfirmEnabled();
 
@@ -153,13 +160,10 @@ public class IronKeyRegisterScreen extends Screen {
 
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
-        // Background first (includes blur layers in many setups)
         this.renderBackground(gfx, mouseX, mouseY, partialTick);
 
-        // Render widgets/buttons/editbox
         super.render(gfx, mouseX, mouseY, partialTick);
 
-        // Draw our text LAST and at high Z so it is never covered by blur overlays.
         try {
             int cx = this.width / 2;
             int cy = this.height / 2;
@@ -167,7 +171,6 @@ public class IronKeyRegisterScreen extends Screen {
             gfx.pose().pushPose();
             gfx.pose().translate(0, 0, 1000);
 
-            // Title and prompt
             gfx.drawCenteredString(this.font, this.title, cx, cy - 55, 0xFFFFFF);
             gfx.drawCenteredString(this.font, "Secret passphrase:", cx, cy - 30, 0xFFFFFF);
 

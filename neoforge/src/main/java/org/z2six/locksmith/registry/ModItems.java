@@ -13,7 +13,6 @@ import org.z2six.locksmith.item.IronKeyItem;
 
 /**
  * NeoForge-side item registry.
- * NeoForge 1.21.x uses DeferredHolder.
  */
 public final class ModItems {
 
@@ -22,11 +21,19 @@ public final class ModItems {
     public static final DeferredRegister<Item> ITEMS =
             DeferredRegister.create(Registries.ITEM, Constants.MOD_ID);
 
-    // Keep field name KEY_IRON because you already use it elsewhere.
+    // Player-visible item
     public static final DeferredHolder<Item, Item> KEY_IRON = ITEMS.register("iron_key", () ->
             new IronKeyItem(new Item.Properties()
                     .stacksTo(1)
                     .rarity(Rarity.UNCOMMON)
+            )
+    );
+
+    // Internal render-only item (NOT added to creative, no recipe). Uses your lock_iron model JSON.
+    public static final DeferredHolder<Item, Item> LOCK_IRON = ITEMS.register("lock_iron", () ->
+            new Item(new Item.Properties()
+                    .stacksTo(64)
+                    .rarity(Rarity.COMMON)
             )
     );
 
@@ -36,8 +43,11 @@ public final class ModItems {
 
     public static void debugLogRegisteredItemsSafe() {
         try {
-            Item item = KEY_IRON.get();
-            LOG.debug("[Locksmith][ModItems] Registered item OK: iron_key={}", safeItemName(new ItemStack(item)));
+            Item key = KEY_IRON.get();
+            Item lock = LOCK_IRON.get();
+            LOG.debug("[Locksmith][ModItems] Registered items OK: iron_key={}, lock_iron={}",
+                    safeItemName(new ItemStack(key)),
+                    safeItemName(new ItemStack(lock)));
         } catch (Throwable t) {
             LOG.warn("[Locksmith][ModItems] debugLogRegisteredItemsSafe failed (non-fatal).", t);
         }
