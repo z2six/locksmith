@@ -7,6 +7,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
+import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.event.LocksmithDoorEvents;
 import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
@@ -20,6 +21,14 @@ public class Locksmith {
     public Locksmith(IEventBus eventBus) {
         LOG.info("[Locksmith] Hello NeoForge world! Bootstrapping common init...");
         CommonClass.init();
+
+        // Ensure the server-authoritative lock profile JSON exists as early as possible
+        try {
+            LockProfileConfig.ensureDefaultFileExists();
+            LOG.info("[Locksmith] Ensured lock profile config exists at startup.");
+        } catch (Throwable t) {
+            LOG.error("[Locksmith] FAILED to ensure lock profile config exists at startup (non-fatal).", t);
+        }
 
         try {
             ModItems.ITEMS.register(eventBus);
@@ -43,12 +52,10 @@ public class Locksmith {
         }
 
         try {
-            // IMPORTANT: priority HIGHEST so we can deny door toggling before anything else opens it.
             NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithDoorEvents::onRightClickBlock);
 
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onPlayerLoggedIn);
 
-            // Cleanup hooks:
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onBlockBreak);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onExplosionDetonate);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onServerTick);

@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -23,9 +24,13 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
+import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.DoorLockManager;
-import org.z2six.locksmith.network.*;
+import org.z2six.locksmith.network.AddDoorLockPayload;
+import org.z2six.locksmith.network.LockDoorPayload;
+import org.z2six.locksmith.network.RemoveDoorLockPayload;
+import org.z2six.locksmith.network.SyncDoorLocksPayload;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
 import org.z2six.locksmith.world.DoorLockSavedData;
@@ -42,10 +47,8 @@ public final class LocksmithDoorEvents {
     private static final int CLEANUP_EVERY_TICKS = 200;
     private static final int CLEANUP_MAX_CHECK_PER_PASS = 512;
 
-    // This is ONLY for client prediction suppression when placing a lock.
     private static final int CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK = 6;
 
-    // Server-side "slam shut" safety net you already saw working.
     private static final int FORCE_CLOSE_AFTER_LOCK_TICKS = 5;
     private static final int FORCE_CLOSE_MAX_PER_TICK = 256;
 
@@ -54,6 +57,9 @@ public final class LocksmithDoorEvents {
 
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         try {
+            // Ensure the JSON config exists the first time someone logs in.
+            LockProfileConfig.ensureDefaultFileExists();
+
             if (!(event.getEntity() instanceof ServerPlayer sp)) return;
             ServerLevel level = sp.serverLevel();
 
@@ -61,10 +67,10 @@ public final class LocksmithDoorEvents {
             data.cleanupInvalidDoors(level, CLEANUP_MAX_CHECK_PER_PASS);
 
             Map<Long, String> snap = data.snapshotLocks();
-            Long2ObjectOpenHashMap<String> map = new Long2ObjectOpenHashMap<>(snap.size());
+            var map = new Long2ObjectOpenHashMap<String>(snap.size());
             for (Map.Entry<Long, String> e : snap.entrySet()) {
                 if (e.getValue() != null && !e.getValue().isBlank()) {
-                    map.put(e.getKey().longValue(), e.getValue());
+                    map.put(e.getKey(), e.getValue());
                 }
             }
 
@@ -83,7 +89,6 @@ public final class LocksmithDoorEvents {
 
             BlockPos clickedPos = event.getPos();
             BlockState clickedState = level.getBlockState(clickedPos);
-
             if (!(clickedState.getBlock() instanceof DoorBlock)) {
                 return;
             }
@@ -94,16 +99,11 @@ public final class LocksmithDoorEvents {
                 return;
             }
 
-            // -----------------------
-            // CLIENT-SIDE BEHAVIOR
-            // -----------------------
             if (level.isClientSide) {
                 long doorLong = doorPos.asLong();
 
-                // (Optional) opportunistic cleanup
                 ClientDoorOpenBlocker.cleanupExpired(level.getGameTime(), 64);
 
-                // If NOT locked, and holding registered key -> EAT + block predicted open + send payload.
                 if (!ClientDoorLockState.isLocked(doorLong)
                         && event.getHand() == InteractionHand.MAIN_HAND) {
 
@@ -112,7 +112,6 @@ public final class LocksmithDoorEvents {
                             && held.getItem() instanceof IronKeyItem
                             && IronKeyItem.isRegistered(held)) {
 
-                        // IMPORTANT: block the open prediction window BEFORE anything else.
                         ClientDoorOpenBlocker.blockOpenForTicks(doorLong, level.getGameTime(), CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK);
 
                         event.setCanceled(true);
@@ -129,7 +128,6 @@ public final class LocksmithDoorEvents {
                     }
                 }
 
-                // If locked, deny when no key (already-working path).
                 if (ClientDoorLockState.isLocked(doorLong)) {
                     String requiredHash = ClientDoorLockState.getRequiredHash(doorLong);
                     if (requiredHash != null && !requiredHash.isBlank()) {
@@ -146,9 +144,6 @@ public final class LocksmithDoorEvents {
                 return;
             }
 
-            // -----------------------
-            // SERVER-SIDE BEHAVIOR
-            // -----------------------
             if (!(player instanceof ServerPlayer sp)) {
                 return;
             }
@@ -282,14 +277,17 @@ public final class LocksmithDoorEvents {
         try {
             if (event == null) return;
 
-            var server = event.getServer();
+            MinecraftServer server = event.getServer();
             if (server == null) return;
 
             for (ServerLevel level : server.getAllLevels()) {
                 DoorLockManager.tickForceClose(level, FORCE_CLOSE_MAX_PER_TICK);
             }
 
-            long gameTime = server.overworld().getGameTime();
+            ServerLevel overworld = server.overworld();
+            if (overworld == null) return;
+
+            long gameTime = overworld.getGameTime();
             if (gameTime % CLEANUP_EVERY_TICKS != 0) return;
 
             for (ServerLevel level : server.getAllLevels()) {
@@ -297,10 +295,10 @@ public final class LocksmithDoorEvents {
                 int removedCount = data.cleanupInvalidDoors(level, CLEANUP_MAX_CHECK_PER_PASS);
                 if (removedCount > 0) {
                     Map<Long, String> snap = data.snapshotLocks();
-                    Long2ObjectOpenHashMap<String> map = new Long2ObjectOpenHashMap<>(snap.size());
+                    var map = new Long2ObjectOpenHashMap<String>(snap.size());
                     for (Map.Entry<Long, String> e : snap.entrySet()) {
                         if (e.getValue() != null && !e.getValue().isBlank()) {
-                            map.put(e.getKey().longValue(), e.getValue());
+                            map.put(e.getKey(), e.getValue());
                         }
                     }
                     for (ServerPlayer sp : level.players()) {

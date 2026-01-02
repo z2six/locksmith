@@ -1,36 +1,36 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/render/DoorLockRenderer.java
 package org.z2six.locksmith.render;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
+import net.minecraft.core.Direction;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import org.joml.Quaternionf;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.registry.ModItems;
+import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
+import org.z2six.locksmith.render.profile.LockRenderProfile;
+import org.z2six.locksmith.render.profile.LockTargetType;
 
 public final class DoorLockRenderer {
 
     private static final Logger LOG = Constants.LOG;
 
-    /**
-     * Debug throttling (avoid log spam)
-     */
     private static long LAST_DEBUG_AT_TICK = Long.MIN_VALUE;
 
     private DoorLockRenderer() {
-        // no-op
     }
 
     public static void onRenderLevelStage(RenderLevelStageEvent event) {
@@ -56,7 +56,7 @@ public final class DoorLockRenderer {
                 return;
             }
 
-            PoseStack pose = event.getPoseStack();
+            var pose = event.getPoseStack();
             if (pose == null) return;
 
             double camX = event.getCamera().getPosition().x;
@@ -74,7 +74,6 @@ public final class DoorLockRenderer {
                     doDebugThisTick = true;
                 }
             } catch (Throwable ignored) {
-                // ignore
             }
 
             for (long posLong : ClientDoorLockState.getSnapshot().keySet()) {
@@ -106,7 +105,6 @@ public final class DoorLockRenderer {
                     continue;
                 }
 
-                // Distance cull
                 double dx = (pos.getX() + 0.5) - camX;
                 double dy = (pos.getY() + 0.5) - camY;
                 double dz = (pos.getZ() + 0.5) - camZ;
@@ -124,61 +122,84 @@ public final class DoorLockRenderer {
                     continue;
                 }
 
+                // --- NEW: profile lookup by block id (server-authoritative, S2C synced) ---
+                ResourceLocation blockId = null;
+                try {
+                    blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+                } catch (Throwable ignored) {
+                }
+
+                LockRenderProfile prof = null;
+                if (blockId != null) {
+                    prof = ClientLockRenderProfiles.get(blockId);
+                }
+
+                // Only apply profile if it's a DOOR profile.
+                boolean useProfile = (prof != null && prof.isValid() && prof.type == LockTargetType.DOOR);
+
+                // Fallback to current hardcoded tuning if missing or wrong type.
+                double baseOffsetX = useProfile ? prof.offsetX : LockRenderTuning.OFFSET_X;
+                double baseOffsetY = useProfile ? prof.offsetY : LockRenderTuning.OFFSET_Y;
+                double baseOffsetZ = useProfile ? prof.offsetZ : LockRenderTuning.OFFSET_Z;
+
+                float rotX = useProfile ? prof.rotX : LockRenderTuning.ROT_X;
+                float rotY = useProfile ? prof.rotY : LockRenderTuning.ROT_Y;
+                float rotZ = useProfile ? prof.rotZ : LockRenderTuning.ROT_Z;
+
+                float scale = useProfile ? prof.scale : LockRenderTuning.SCALE;
+
+                double hingeLeftMag = useProfile ? prof.hingeNudgeLeft : LockRenderTuning.NUDGE_HINGE_LEFT;
+                double hingeRightMag = useProfile ? prof.hingeNudgeRight : LockRenderTuning.NUDGE_HINGE_RIGHT;
+
+                double hingeSignedNudge = (hinge == DoorHingeSide.LEFT) ? -hingeLeftMag : hingeRightMag;
+
+                double finalX = baseOffsetX + hingeSignedNudge;
+                double finalY = baseOffsetY;
+                double finalZ = baseOffsetZ;
+
                 int light;
                 try {
                     light = LevelRenderer.getLightColor(level, pos);
                 } catch (Throwable t) {
-                    light = 0x00F000F0; // safe-ish fallback
+                    light = 0x00F000F0;
                 }
 
                 pose.pushPose();
 
-                // Move to block center relative to camera
                 pose.translate(
                         pos.getX() - camX + 0.5,
                         pos.getY() - camY + 0.5,
                         pos.getZ() - camZ + 0.5
                 );
 
-                // Rotate so our local frame matches door facing
                 float yRot = -facing.toYRot();
                 pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(yRot)));
 
-                // Apply hinge compensation with opposite signs, but different magnitudes.
-                // LEFT hinge must move opposite direction across the face vs RIGHT hinge.
-                double hingeSignedNudge;
-                if (hinge == DoorHingeSide.LEFT) {
-                    hingeSignedNudge = -LockRenderTuning.NUDGE_HINGE_LEFT;
-                } else {
-                    hingeSignedNudge = LockRenderTuning.NUDGE_HINGE_RIGHT;
-                }
-
-                double finalX = LockRenderTuning.OFFSET_X + hingeSignedNudge;
-                double finalY = LockRenderTuning.OFFSET_Y;
-                double finalZ = LockRenderTuning.OFFSET_Z;
-
                 if (doDebugThisTick) {
                     LOG.debug(
-                            "[Locksmith][DoorLockRenderer] Render lock pos={} facing={} hinge={} yRot={} baseX={} nudge={} finalX={} finalY={} finalZ={}",
-                            pos, facing, hinge, yRot, LockRenderTuning.OFFSET_X, hingeSignedNudge, finalX, finalY, finalZ
+                            "[Locksmith][DoorLockRenderer] pos={} blockId={} prof={} facing={} hinge={} yRot={} baseX={} nudge={} finalX={} finalY={} finalZ={} profilesCached={}",
+                            pos,
+                            (blockId == null ? "<null>" : blockId),
+                            (useProfile ? "YES" : "NO"),
+                            facing,
+                            hinge,
+                            yRot,
+                            baseOffsetX,
+                            hingeSignedNudge,
+                            finalX,
+                            finalY,
+                            finalZ,
+                            ClientLockRenderProfiles.size()
                     );
                 }
 
                 pose.translate(finalX, finalY, finalZ);
 
-                // Optional additional rotations
-                if (LockRenderTuning.ROT_X != 0) {
-                    pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(LockRenderTuning.ROT_X)));
-                }
-                if (LockRenderTuning.ROT_Y != 0) {
-                    pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(LockRenderTuning.ROT_Y)));
-                }
-                if (LockRenderTuning.ROT_Z != 0) {
-                    pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(LockRenderTuning.ROT_Z)));
-                }
+                if (rotX != 0) pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(rotX)));
+                if (rotY != 0) pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(rotY)));
+                if (rotZ != 0) pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(rotZ)));
 
-                // Scale
-                pose.scale(LockRenderTuning.SCALE, LockRenderTuning.SCALE, LockRenderTuning.SCALE);
+                pose.scale(scale, scale, scale);
 
                 try {
                     mc.getItemRenderer().renderStatic(
@@ -192,7 +213,6 @@ public final class DoorLockRenderer {
                             0
                     );
                 } catch (Throwable t) {
-                    // Don’t crash render loop; just skip this lock.
                     if (LOG.isDebugEnabled()) {
                         LOG.debug("[Locksmith][DoorLockRenderer] renderStatic failed for pos={} (non-fatal).", pos, t);
                     }
@@ -211,7 +231,6 @@ public final class DoorLockRenderer {
             if (rendered > 0 && doDebugThisTick) {
                 LOG.debug("[Locksmith][DoorLockRenderer] Rendered {} lock(s) this stage.", rendered);
             }
-
         } catch (Throwable t) {
             LOG.error("[Locksmith][DoorLockRenderer] onRenderLevelStage failed (non-fatal).", t);
         }

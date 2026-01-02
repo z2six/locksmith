@@ -6,15 +6,11 @@ import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.render.DoorLockRenderer;
 
-/**
- * Client-only initializer. Called via reflection from main mod class to avoid server classloading issues.
- */
 public final class ClientInit {
 
     private static final Logger LOG = Constants.LOG;
 
     private ClientInit() {
-        // no-op
     }
 
     public static void init() {
@@ -23,6 +19,13 @@ public final class ClientInit {
             LOG.info("[Locksmith][ClientInit] Registered DoorLockRenderer.");
         } catch (Throwable t) {
             LOG.error("[Locksmith][ClientInit] Failed to register DoorLockRenderer (non-fatal).", t);
+        }
+
+        try {
+            NeoForge.EVENT_BUS.addListener(ClientLifecycleEvents::onClientLoggedOut);
+            LOG.info("[Locksmith][ClientInit] Registered ClientLifecycleEvents.");
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][ClientInit] Failed to register ClientLifecycleEvents (non-fatal).", t);
         }
     }
 }
