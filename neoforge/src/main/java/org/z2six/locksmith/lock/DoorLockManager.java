@@ -1,33 +1,25 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/lock/DoorLockManager.java
 package org.z2six.locksmith.lock;
 
+import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import org.slf4j.Logger;
-import org.z2six.locksmith.Constants;
-import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.registry.ModItems;
+import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.world.DoorLockSavedData;
 
 public final class DoorLockManager {
 
-    private static final Logger LOG = Constants.LOG;
-
-    /**
-     * After placing a lock we keep slamming the door shut for a few ticks.
-     * This prevents any "vanilla toggles after our close" ordering race.
-     *
-     * Key: doorLowerPos.asLong()
-     * Value: remaining ticks to enforce close.
-     */
+    private static final Logger LOG = LogUtils.getLogger();
     private static final Long2IntOpenHashMap FORCE_CLOSE_TICKS = new Long2IntOpenHashMap();
 
     static {
@@ -87,7 +79,6 @@ public final class DoorLockManager {
             if (stack == null || stack.isEmpty()) return false;
             if (!stack.is(ModItems.KEY_IRON.get())) return false;
             if (!IronKeyItem.isRegistered(stack)) return false;
-
             String h = IronKeyItem.getHashOrEmpty(stack);
             return requiredHash.equals(h);
         } catch (Throwable t) {
@@ -96,9 +87,10 @@ public final class DoorLockManager {
         }
     }
 
-    public static boolean tryLockDoorWithHeldKey(ServerLevel level, Player player, BlockPos doorLowerPos, ItemStack heldKey) {
+    public static boolean tryLockDoorWithHeldKey(ServerLevelAccessor level, Player player, BlockPos doorLowerPos, ItemStack heldKey) {
         try {
-            if (level == null || player == null || doorLowerPos == null) return false;
+            if (!(level instanceof net.minecraft.server.level.ServerLevel sLevel)) return false;
+            if (player == null || doorLowerPos == null) return false;
             if (heldKey == null || heldKey.isEmpty()) return false;
             if (!heldKey.is(ModItems.KEY_IRON.get())) return false;
             if (!IronKeyItem.isRegistered(heldKey)) return false;
@@ -106,7 +98,7 @@ public final class DoorLockManager {
             String hash = IronKeyItem.getHashOrEmpty(heldKey);
             if (hash == null || hash.isBlank()) return false;
 
-            DoorLockSavedData data = DoorLockSavedData.get(level);
+            DoorLockSavedData data = DoorLockSavedData.get(sLevel);
 
             if (data.isLocked(doorLowerPos)) {
                 return false;
@@ -123,7 +115,7 @@ public final class DoorLockManager {
         }
     }
 
-    public static String getDoorLockHash(ServerLevel level, BlockPos doorLowerPos) {
+    public static String getDoorLockHash(net.minecraft.server.level.ServerLevel level, BlockPos doorLowerPos) {
         try {
             if (level == null || doorLowerPos == null) return "";
             return DoorLockSavedData.get(level).getHash(doorLowerPos);
@@ -133,10 +125,7 @@ public final class DoorLockManager {
         }
     }
 
-    /**
-     * Server-authoritative close (writes to world).
-     */
-    public static void forceCloseDoor(ServerLevel level, BlockPos doorLowerPos) {
+    public static void forceCloseDoor(net.minecraft.server.level.ServerLevel level, BlockPos doorLowerPos) {
         try {
             if (level == null || doorLowerPos == null) return;
             forceCloseDoorAnyLevel(level, doorLowerPos, "[Server]");
@@ -145,13 +134,6 @@ public final class DoorLockManager {
         }
     }
 
-    /**
-     * Client-visual close (writes to client world, purely to prevent flicker).
-     *
-     * This is safe because:
-     * - We ONLY call it when level.isClientSide == true
-     * - Server will still correct state authoritatively if needed
-     */
     public static void forceCloseDoorClient(Level level, BlockPos doorLowerPos) {
         try {
             if (level == null || doorLowerPos == null) return;
@@ -171,6 +153,7 @@ public final class DoorLockManager {
 
             if (lower.hasProperty(DoorBlock.OPEN) && lower.getValue(DoorBlock.OPEN)) {
                 BlockState closedLower = lower.setValue(DoorBlock.OPEN, false);
+                // flag 3: update + render. Works fine for client visual.
                 level.setBlock(doorLowerPos, closedLower, 3);
                 changed = true;
             }
@@ -185,7 +168,8 @@ public final class DoorLockManager {
                 }
             }
 
-            if (changed && LOG.isDebugEnabled() && (level.getGameTime() % 10 == 0)) {
+            // Only occasionally log to avoid spam, but enough to debug.
+            if (changed && LOG.isDebugEnabled() && (level.getGameTime() % 5 == 0)) {
                 Direction facing = lower.hasProperty(DoorBlock.FACING) ? lower.getValue(DoorBlock.FACING) : Direction.NORTH;
                 LOG.debug("[Locksmith][DoorLockManager] {} forceCloseDoor applied at {} facing={}", tag, doorLowerPos, facing);
             }
@@ -195,17 +179,12 @@ public final class DoorLockManager {
         }
     }
 
-    /**
-     * Request that a door be forcibly closed for N ticks.
-     * This is our "no matter what, door ends closed" safety net.
-     */
-    public static void requestForceClose(ServerLevel level, BlockPos doorLowerPos, int ticks) {
+    public static void requestForceClose(net.minecraft.server.level.ServerLevel level, BlockPos doorLowerPos, int ticks) {
         try {
             if (level == null || doorLowerPos == null) return;
             if (ticks <= 0) ticks = 1;
 
             long key = doorLowerPos.asLong();
-
             synchronized (FORCE_CLOSE_TICKS) {
                 int prev = FORCE_CLOSE_TICKS.get(key);
                 int next = Math.max(prev, ticks);
@@ -220,10 +199,7 @@ public final class DoorLockManager {
         }
     }
 
-    /**
-     * Called from server tick. Slams shut any queued doors and decrements.
-     */
-    public static void tickForceClose(ServerLevel level, int maxPerTick) {
+    public static void tickForceClose(net.minecraft.server.level.ServerLevel level, int maxPerTick) {
         try {
             if (level == null) return;
 

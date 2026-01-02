@@ -4,7 +4,8 @@
   "package": "org.z2six.locksmith.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "MixinDoorBlock"
+    "MixinDoorBlock",
+    "MixinMultiPlayerGameMode"
   ],
   "client": [
     "MixinTitleScreen"

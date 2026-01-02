@@ -7,24 +7,28 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.BlockHitResult;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.DoorLockManager;
-import org.z2six.locksmith.network.LockDoorPayload;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
 
+/**
+ * Defensive door hooks:
+ * - Deny opening locked doors without a matching key (client-side safety).
+ * - Cancel predicted open via setOpen during our "blocker" window.
+ *
+ * NOTE:
+ * Lock registration click is handled authoritatively by MixinMultiPlayerGameMode.
+ * We intentionally do NOT send LockDoorPayload from here to avoid duplicate sends.
+ */
 @Mixin(DoorBlock.class)
 public class MixinDoorBlock {
 
@@ -32,120 +36,77 @@ public class MixinDoorBlock {
 
     static {
         try {
-            LOG.info("[Locksmith][MixinDoorBlock] LOADED (if you don't see this, the mixin is NOT applying!)");
+            LOG.info("[Locksmith][MixinDoorBlock] LOADED (DoorBlock defensive hooks active)");
         } catch (Throwable ignored) {
         }
     }
 
-    // ---- Existing intercepts (kept) ----
-
-    @Inject(method = "use", at = @At("HEAD"), cancellable = true, require = 0)
-    private void locksmith$use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit,
-                               CallbackInfoReturnable<InteractionResult> cir) {
-        locksmith$intercept("use", state, level, pos, player, hand, cir);
-    }
-
-    @Inject(method = "useWithoutItem", at = @At("HEAD"), cancellable = true, require = 0)
-    private void locksmith$useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit,
+    /**
+     * Empty-hand interaction path:
+     * Prevent opening locked doors without a key client-side.
+     *
+     * Signature used by DoorBlock in 1.21.x:
+     * useWithoutItem(BlockState, Level, BlockPos, Player, BlockHitResult) -> InteractionResult
+     */
+    @Inject(
+            method = "useWithoutItem(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/phys/BlockHitResult;)Lnet/minecraft/world/InteractionResult;",
+            at = @At("HEAD"),
+            cancellable = true,
+            require = 0
+    )
+    private void locksmith$useWithoutItem(BlockState state,
+                                          Level level,
+                                          BlockPos pos,
+                                          Player player,
+                                          net.minecraft.world.phys.BlockHitResult hit,
                                           CallbackInfoReturnable<InteractionResult> cir) {
-        locksmith$intercept("useWithoutItem", state, level, pos, player, InteractionHand.MAIN_HAND, cir);
-    }
-
-    @Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true, require = 0)
-    private void locksmith$useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit,
-                                     CallbackInfoReturnable<InteractionResult> cir) {
-        locksmith$intercept("useItemOn", state, level, pos, player, hand, cir);
-    }
-
-    private void locksmith$intercept(String hook,
-                                     BlockState state,
-                                     Level level,
-                                     BlockPos pos,
-                                     Player player,
-                                     InteractionHand hand,
-                                     CallbackInfoReturnable<InteractionResult> cir) {
         try {
-            if (level == null || pos == null || player == null || state == null || cir == null) return;
+            if (cir == null) return;
+            if (level == null || pos == null || player == null || state == null) return;
+            if (!level.isClientSide) return;
             if (!(state.getBlock() instanceof DoorBlock)) return;
 
             BlockPos doorPos = DoorLockManager.normalizeDoorPos(level, pos, state);
-            long posLong = doorPos.asLong();
+            long doorLong = doorPos.asLong();
 
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("[Locksmith][MixinDoorBlock] fired hook={} side={} pos={} hand={}",
-                        hook, (level.isClientSide ? "CLIENT" : "SERVER"), doorPos, hand);
-            }
+            if (!ClientDoorLockState.isLocked(doorLong)) return;
 
-            // Client-side: deny opens for locked doors without key; and for lock-registration,
-            // eat interaction + send packet + mark short "block predicted open" window.
-            if (level.isClientSide) {
-                // If locked and no key -> deny.
-                if (ClientDoorLockState.isLocked(posLong)) {
-                    String requiredHash = ClientDoorLockState.getRequiredHash(posLong);
-                    if (requiredHash != null && !requiredHash.isBlank()) {
-                        boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
-                        if (!hasKey) {
-                            cir.setReturnValue(InteractionResult.FAIL);
-                            return;
-                        }
-                    }
-                    return;
+            String requiredHash = ClientDoorLockState.getRequiredHash(doorLong);
+            if (requiredHash == null || requiredHash.isBlank()) return;
+
+            boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
+            if (!hasKey) {
+                cir.setReturnValue(InteractionResult.FAIL);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][MixinDoorBlock][Client] Denied empty-hand use on locked door (no key). pos={}", doorPos);
                 }
-
-                // Not locked: holding registered key -> eat interaction + mark open-block + send payload.
-                ItemStack held = player.getMainHandItem();
-                if (hand == InteractionHand.MAIN_HAND
-                        && held != null
-                        && !held.isEmpty()
-                        && held.getItem() instanceof IronKeyItem
-                        && IronKeyItem.isRegistered(held)) {
-
-                    // Short window: suppress predicted open (real flicker kill is setOpen inject below).
-                    ClientDoorOpenBlocker.blockOpenForTicks(posLong, level.getGameTime(), 6);
-
-                    try {
-                        PacketDistributor.sendToServer(new LockDoorPayload(posLong));
-                        if (LOG.isDebugEnabled()) {
-                            LOG.debug("[Locksmith][MixinDoorBlock][Client] Sent LockDoorPayload pos={}", doorPos);
-                        }
-                    } catch (Throwable t) {
-                        LOG.error("[Locksmith][MixinDoorBlock][Client] Failed sending LockDoorPayload (non-fatal).", t);
-                    }
-
-                    cir.setReturnValue(InteractionResult.SUCCESS);
-                }
-
-                return;
             }
-
-            // Server-side handled in events/payload; keep this path permissive.
         } catch (Throwable t) {
-            LOG.error("[Locksmith][MixinDoorBlock] intercept failed (non-fatal).", t);
+            LOG.error("[Locksmith][MixinDoorBlock] useWithoutItem inject failed (non-fatal).", t);
         }
     }
 
-    // ---- NEW: Cancel the actual client "open" operation ----
-    //
-    // Important: In your environment (NeoForge 1.21.1 / 21.1.80), DoorBlock has:
-    //   setOpen(Entity, Level, BlockState, BlockPos, boolean)
-    //
-    // There is NOT an overload without Entity. The earlier extra inject caused the mixin
-    // to fail applying with "Invalid descriptor".
-    //
-    // We pin the descriptor to avoid ambiguity and to ensure we only ever target the real method.
-
+    /**
+     * Cancels predicted opens that happen via DoorBlock#setOpen(...) on client.
+     * This is a safety net for the short "blocker" window after lock-click,
+     * and for locked doors where a player lacks a key.
+     */
     @Inject(
             method = "setOpen(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/level/Level;Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/core/BlockPos;Z)V",
             at = @At("HEAD"),
             cancellable = true,
             require = 0
     )
-    private static void locksmith$setOpen(Entity entity, Level level, BlockState state, BlockPos pos, boolean open, CallbackInfo ci) {
+    private static void locksmith$setOpen(Entity entity,
+                                          Level level,
+                                          BlockState state,
+                                          BlockPos pos,
+                                          boolean open,
+                                          CallbackInfo ci) {
         try {
             if (ci == null) return;
             if (level == null || state == null || pos == null) return;
 
-            // Only block predicted opens on the client.
             if (!level.isClientSide) return;
             if (!open) return;
             if (!(state.getBlock() instanceof DoorBlock)) return;
@@ -154,16 +115,18 @@ public class MixinDoorBlock {
             long doorLong = doorLower.asLong();
             long now = level.getGameTime();
 
-            // 1) If we're in a "register lock click" window, cancel the open to prevent flicker.
+            // Block predicted opens for the short window after our "lock click".
             if (ClientDoorOpenBlocker.shouldBlockOpenNow(doorLong, now)) {
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("[Locksmith][MixinDoorBlock] CANCEL predicted open via setOpen at {} (blocker active).", doorLower);
                 }
                 ci.cancel();
+                // Also visually ensure it's closed.
+                DoorLockManager.forceCloseDoorClient(level, doorLower);
                 return;
             }
 
-            // 2) Extra safety: if locked and player entity has no key, cancel the predicted open too.
+            // Also deny predicted open for locked doors if the player doesn't have the key.
             if (ClientDoorLockState.isLocked(doorLong)) {
                 String requiredHash = ClientDoorLockState.getRequiredHash(doorLong);
                 if (requiredHash != null && !requiredHash.isBlank() && entity instanceof Player p) {
@@ -173,9 +136,11 @@ public class MixinDoorBlock {
                             LOG.debug("[Locksmith][MixinDoorBlock] CANCEL predicted open via setOpen at {} (locked + no key).", doorLower);
                         }
                         ci.cancel();
+                        DoorLockManager.forceCloseDoorClient(level, doorLower);
                     }
                 }
             }
+
         } catch (Throwable t) {
             LOG.error("[Locksmith][MixinDoorBlock] setOpen inject failed (non-fatal).", t);
         }

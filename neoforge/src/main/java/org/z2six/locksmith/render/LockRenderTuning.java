@@ -28,5 +28,5 @@ public final class LockRenderTuning {
     public static float SCALE = 0.75f;
 
     // Hinge-side nudge (so the lock sits nicely depending on hinge)
-    public static double HINGE_NUDGE = 0.18;
+    public static double HINGE_NUDGE = 0.325;
 }
