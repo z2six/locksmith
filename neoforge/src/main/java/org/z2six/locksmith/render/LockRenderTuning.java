@@ -15,9 +15,9 @@ public final class LockRenderTuning {
 
     // Offsets in block-local space (blocks are 1.0 unit)
     // Convention: (0,0,0) is block corner; we'll translate to block center before applying offsets.
-    public static double OFFSET_X = 0.0;     // left/right relative to door face
-    public static double OFFSET_Y = 0.0;     // up/down
-    public static double OFFSET_Z = 0.44;    // out from the door surface (towards player)
+    public static double OFFSET_X = -0.05;     // left/right relative to door face
+    public static double OFFSET_Y = 0.5;     // up/down
+    public static double OFFSET_Z = -0.5;    // out from the door surface (towards player)
 
     // Rotations in degrees (applied after door-facing rotation)
     public static float ROT_X = 0.0f;

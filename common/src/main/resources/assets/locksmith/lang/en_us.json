@@ -3,5 +3,6 @@
   "tooltip.locksmith.unregistered": "Unregistered",
   "tooltip.locksmith.registered_by": "Registered by: %s",
   "tooltip.locksmith.tools_and_utilities": "Tools & Utilities",
+  "message.locksmith.door_locked_no_key": "This door is locked. You don't have the right key.",
   "item.locksmith.lock_iron": "Iron Lock"
 }

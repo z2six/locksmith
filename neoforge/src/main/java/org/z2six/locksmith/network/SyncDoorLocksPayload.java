@@ -1,8 +1,8 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/network/SyncDoorLocksPayload.java
 package org.z2six.locksmith.network;
 
-import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.longs.LongList;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -12,7 +12,11 @@ import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.render.ClientDoorLockState;
 
-public record SyncDoorLocksPayload(LongList positions) implements CustomPacketPayload {
+/**
+ * S2C: full sync of locked doors for current dimension.
+ * Sends posLong -> requiredHash so client can prevent door-open prediction flicker.
+ */
+public record SyncDoorLocksPayload(Long2ObjectMap<String> locks) implements CustomPacketPayload {
 
     private static final Logger LOG = Constants.LOG;
 
@@ -22,19 +26,26 @@ public record SyncDoorLocksPayload(LongList positions) implements CustomPacketPa
     public static final StreamCodec<FriendlyByteBuf, SyncDoorLocksPayload> STREAM_CODEC =
             StreamCodec.of(
                     (buf, msg) -> {
-                        LongList list = (msg == null || msg.positions == null) ? new LongArrayList() : msg.positions;
-                        buf.writeVarInt(list.size());
-                        for (int i = 0; i < list.size(); i++) {
-                            buf.writeLong(list.getLong(i));
+                        Long2ObjectMap<String> map = (msg == null || msg.locks == null) ? new Long2ObjectOpenHashMap<>() : msg.locks;
+                        buf.writeVarInt(map.size());
+                        for (Long2ObjectMap.Entry<String> e : map.long2ObjectEntrySet()) {
+                            buf.writeLong(e.getLongKey());
+                            String hash = e.getValue();
+                            if (hash == null) hash = "";
+                            buf.writeUtf(hash, 128);
                         }
                     },
                     buf -> {
                         int n = buf.readVarInt();
-                        LongArrayList list = new LongArrayList(n);
+                        Long2ObjectOpenHashMap<String> map = new Long2ObjectOpenHashMap<>(n);
                         for (int i = 0; i < n; i++) {
-                            list.add(buf.readLong());
+                            long pos = buf.readLong();
+                            String hash = buf.readUtf(128);
+                            if (hash != null && !hash.isBlank()) {
+                                map.put(pos, hash);
+                            }
                         }
-                        return new SyncDoorLocksPayload(list);
+                        return new SyncDoorLocksPayload(map);
                     }
             );
 
@@ -47,9 +58,9 @@ public record SyncDoorLocksPayload(LongList positions) implements CustomPacketPa
         try {
             ctx.enqueueWork(() -> {
                 try {
-                    if (msg == null || msg.positions == null) return;
-                    ClientDoorLockState.setAll(msg.positions);
-                    LOG.debug("[Locksmith][Client] SyncDoorLocksPayload applied. count={}", msg.positions.size());
+                    if (msg == null || msg.locks == null) return;
+                    ClientDoorLockState.setAll(msg.locks);
+                    LOG.info("[Locksmith][Client] Synced door locks. count={}", msg.locks.size());
                 } catch (Throwable t) {
                     LOG.error("[Locksmith][Client] SyncDoorLocksPayload apply failed (non-fatal).", t);
                 }

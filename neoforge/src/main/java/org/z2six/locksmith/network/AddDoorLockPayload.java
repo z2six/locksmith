@@ -10,7 +10,10 @@ import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.render.ClientDoorLockState;
 
-public record AddDoorLockPayload(long posLong) implements CustomPacketPayload {
+/**
+ * S2C: add a single locked door entry (posLong -> hash).
+ */
+public record AddDoorLockPayload(long posLong, String hash) implements CustomPacketPayload {
 
     private static final Logger LOG = Constants.LOG;
 
@@ -19,8 +22,12 @@ public record AddDoorLockPayload(long posLong) implements CustomPacketPayload {
 
     public static final StreamCodec<FriendlyByteBuf, AddDoorLockPayload> STREAM_CODEC =
             StreamCodec.of(
-                    (buf, msg) -> buf.writeLong(msg.posLong),
-                    buf -> new AddDoorLockPayload(buf.readLong())
+                    (buf, msg) -> {
+                        buf.writeLong(msg.posLong);
+                        String h = (msg.hash == null) ? "" : msg.hash;
+                        buf.writeUtf(h, 128);
+                    },
+                    buf -> new AddDoorLockPayload(buf.readLong(), buf.readUtf(128))
             );
 
     @Override
@@ -32,8 +39,10 @@ public record AddDoorLockPayload(long posLong) implements CustomPacketPayload {
         try {
             ctx.enqueueWork(() -> {
                 try {
-                    ClientDoorLockState.add(msg.posLong);
-                    LOG.debug("[Locksmith][Client] AddDoorLockPayload applied. posLong={}", msg.posLong);
+                    if (msg == null) return;
+                    if (msg.hash == null || msg.hash.isBlank()) return;
+                    ClientDoorLockState.put(msg.posLong, msg.hash);
+                    LOG.debug("[Locksmith][Client] Added door lock. posLong={} hashLen={}", msg.posLong, msg.hash.length());
                 } catch (Throwable t) {
                     LOG.error("[Locksmith][Client] AddDoorLockPayload apply failed (non-fatal).", t);
                 }

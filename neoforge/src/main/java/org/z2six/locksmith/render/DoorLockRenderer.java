@@ -34,7 +34,6 @@ public final class DoorLockRenderer {
 
     public static void onRenderLevelStage(RenderLevelStageEvent event) {
         try {
-            // Render late so it appears on top
             if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
                 return;
             }
@@ -57,7 +56,7 @@ public final class DoorLockRenderer {
 
             int rendered = 0;
 
-            for (long posLong : ClientDoorLockState.getSnapshot()) {
+            for (long posLong : ClientDoorLockState.getSnapshot().keySet()) {
                 BlockPos pos = BlockPos.of(posLong);
 
                 BlockState state = level.getBlockState(pos);
@@ -65,13 +64,11 @@ public final class DoorLockRenderer {
                     continue;
                 }
 
-                // Only render on CLOSED doors
                 boolean open = state.getValue(DoorBlock.OPEN);
                 if (open) {
                     continue;
                 }
 
-                // Optional distance cull (keeps it cheap)
                 double dx = (pos.getX() + 0.5) - camX;
                 double dy = (pos.getY() + 0.5) - camY;
                 double dz = (pos.getZ() + 0.5) - camZ;
@@ -87,32 +84,25 @@ public final class DoorLockRenderer {
 
                 pose.pushPose();
 
-                // Move to door block relative to camera
                 pose.translate(pos.getX() - camX + 0.5, pos.getY() - camY + 0.5, pos.getZ() - camZ + 0.5);
 
-                // Rotate to match door facing (model faces "south" by default in many item models; we adjust)
                 float yRot = -facing.toYRot();
                 pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(yRot)));
 
-                // Apply hinge nudge left/right (so you can place on correct side)
                 double hingeSign = (hinge == DoorHingeSide.LEFT) ? -1.0 : 1.0;
 
-                // Apply tuning offsets (in the rotated local space)
                 pose.translate(
                         LockRenderTuning.OFFSET_X + hingeSign * LockRenderTuning.HINGE_NUDGE,
                         LockRenderTuning.OFFSET_Y,
                         LockRenderTuning.OFFSET_Z
                 );
 
-                // Apply tuning rotations
                 if (LockRenderTuning.ROT_X != 0) pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(LockRenderTuning.ROT_X)));
                 if (LockRenderTuning.ROT_Y != 0) pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(LockRenderTuning.ROT_Y)));
                 if (LockRenderTuning.ROT_Z != 0) pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(LockRenderTuning.ROT_Z)));
 
-                // Scale
                 pose.scale(LockRenderTuning.SCALE, LockRenderTuning.SCALE, LockRenderTuning.SCALE);
 
-                // Render the lock item model into the world
                 mc.getItemRenderer().renderStatic(
                         lockStack,
                         ItemDisplayContext.FIXED,
@@ -129,11 +119,10 @@ public final class DoorLockRenderer {
                 rendered++;
             }
 
-            // Flush
             buffer.endBatch();
 
             if (rendered > 0 && (mc.level.getGameTime() % 200 == 0)) {
-                LOG.debug("[Locksmith][DoorLockRenderer] Rendered {} lock(s) this frame stage.", rendered);
+                LOG.debug("[Locksmith][DoorLockRenderer] Rendered {} lock(s) this stage.", rendered);
             }
 
         } catch (Throwable t) {
