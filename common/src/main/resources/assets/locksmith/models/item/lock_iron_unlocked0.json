@@ -1,6 +1,6 @@
 {
 	"format_version": "1.9.0",
-	"credit": "Made with Blockbench",
+	"credit": "Made by Z2SIX",
 	"textures": {
 		"0": "locksmith:block/lock_iron_texture",
 		"particle": "locksmith:block/lock_iron_texture"
@@ -20,9 +20,9 @@
 			}
 		},
 		{
-			"from": [9.75, 7, 7.25],
-			"to": [12.75, 7.75, 7.75],
-			"rotation": {"angle": 0, "axis": "y", "origin": [11.75, 3, 7]},
+			"from": [6, 8, 7.25],
+			"to": [9, 8.75, 7.75],
+			"rotation": {"angle": 0, "axis": "y", "origin": [8, 4, 7]},
 			"faces": {
 				"north": {"uv": [6, 4, 9, 5], "texture": "#0"},
 				"east": {"uv": [9, 2, 10, 3], "texture": "#0"},
@@ -33,9 +33,9 @@
 			}
 		},
 		{
-			"from": [9, 5, 7.25],
-			"to": [9.75, 7, 7.75],
-			"rotation": {"angle": 0, "axis": "y", "origin": [7.75, 0, 7]},
+			"from": [5.25, 6, 7.25],
+			"to": [6, 8, 7.75],
+			"rotation": {"angle": 0, "axis": "y", "origin": [4, 1, 7]},
 			"faces": {
 				"north": {"uv": [11, 7, 12, 8], "texture": "#0"},
 				"east": {"uv": [11, 6, 12, 7], "texture": "#0"},
@@ -46,9 +46,9 @@
 			}
 		},
 		{
-			"from": [12.75, 5, 7.25],
-			"to": [13.5, 7, 7.75],
-			"rotation": {"angle": 0, "axis": "y", "origin": [11.75, 0, 7]},
+			"from": [9, 5, 7.25],
+			"to": [9.75, 8, 7.75],
+			"rotation": {"angle": 0, "axis": "y", "origin": [8, 1, 7]},
 			"faces": {
 				"north": {"uv": [7, 6, 8, 7], "texture": "#0"},
 				"east": {"uv": [7, 7, 8, 8], "texture": "#0"},

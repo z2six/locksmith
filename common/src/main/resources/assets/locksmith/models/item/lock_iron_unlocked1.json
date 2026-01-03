@@ -20,9 +20,9 @@
 			}
 		},
 		{
-			"from": [6, 7, 7.25],
-			"to": [9, 7.75, 7.75],
-			"rotation": {"angle": 0, "axis": "y", "origin": [8, 3, 7]},
+			"from": [6, 8, 7.25],
+			"to": [9, 8.75, 7.75],
+			"rotation": {"angle": -45, "axis": "y", "origin": [9.5, 5, 7.5]},
 			"faces": {
 				"north": {"uv": [6, 4, 9, 5], "texture": "#0"},
 				"east": {"uv": [9, 2, 10, 3], "texture": "#0"},
@@ -33,9 +33,9 @@
 			}
 		},
 		{
-			"from": [5.25, 5, 7.25],
-			"to": [6, 7, 7.75],
-			"rotation": {"angle": 0, "axis": "y", "origin": [4, 0, 7]},
+			"from": [5.25, 6, 7.25],
+			"to": [6, 8, 7.75],
+			"rotation": {"angle": -45, "axis": "y", "origin": [9.5, 5, 7.5]},
 			"faces": {
 				"north": {"uv": [11, 7, 12, 8], "texture": "#0"},
 				"east": {"uv": [11, 6, 12, 7], "texture": "#0"},
@@ -47,8 +47,8 @@
 		},
 		{
 			"from": [9, 5, 7.25],
-			"to": [9.75, 7, 7.75],
-			"rotation": {"angle": 0, "axis": "y", "origin": [8, 0, 7]},
+			"to": [9.75, 8, 7.75],
+			"rotation": {"angle": -45, "axis": "y", "origin": [9.5, 5, 7.5]},
 			"faces": {
 				"north": {"uv": [7, 6, 8, 7], "texture": "#0"},
 				"east": {"uv": [7, 7, 8, 8], "texture": "#0"},
@@ -59,28 +59,6 @@
 			}
 		}
 	],
-    "overrides": [
-      {
-        "predicate": { "custom_model_data": 1 },
-        "model": "locksmith:item/lock_iron_unlocked0"
-      },
-      {
-        "predicate": { "custom_model_data": 2 },
-        "model": "locksmith:item/lock_iron_unlocked0"
-      },
-      {
-        "predicate": { "custom_model_data": 3 },
-        "model": "locksmith:item/lock_iron_unlocked0"
-      },
-      {
-        "predicate": { "custom_model_data": 4 },
-        "model": "locksmith:item/lock_iron_unlocked0"
-      },
-      {
-        "predicate": { "custom_model_data": 5 },
-        "model": "locksmith:item/lock_iron_unlocked0"
-      }
-    ],
 	"display": {
 		"thirdperson_righthand": {
 			"translation": [0, 2.5, 0]

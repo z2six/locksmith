@@ -20,8 +20,6 @@ public final class ModItems {
 
     public static final DeferredHolder<Item, Item> KEY_IRON = ITEMS.register("iron_key", () ->
             new IronKeyItem(new Item.Properties()
-                    // Base item must allow stacking up to 64, otherwise dynamic stack sizing
-                    // in IronKeyItem#getMaxStackSize(ItemStack) can never increase it.
                     .stacksTo(64)
                     .rarity(Rarity.UNCOMMON)
             )
@@ -34,15 +32,18 @@ public final class ModItems {
             )
     );
 
+    // Internal-only item used for the "unlocked" lock model (lock_iron_unlocked.json).
+    // Not added to any creative tab.
+    public static final DeferredHolder<Item, Item> LOCK_IRON_UNLOCKED = ITEMS.register("lock_iron_unlocked", () ->
+            new Item(new Item.Properties()
+                    .stacksTo(64)
+                    .rarity(Rarity.COMMON)
+            )
+    );
+
     private ModItems() {
     }
 
-    /**
-     * Safe debug helper.
-     *
-     * NeoForge DeferredHolders can be unbound during early mod construction.
-     * Accessing .get() too early throws (or NPEs) and spams logs.
-     */
     public static void debugLogRegisteredItemsSafe() {
         try {
             if (!isBoundSafe(KEY_IRON) || !isBoundSafe(LOCK_IRON)) {
@@ -59,9 +60,7 @@ public final class ModItems {
                     safeItemName(new ItemStack(key)),
                     safeItemName(new ItemStack(lock)));
 
-            // Extra diagnostics (safe):
             try {
-                // NeoForge 1.21.x stack sizing is stack-aware, so pass an ItemStack.
                 int baseKeyMax = key.getMaxStackSize(new ItemStack(key));
                 int baseLockMax = lock.getMaxStackSize(new ItemStack(lock));
                 LOG.debug("[Locksmith][ModItems] Base max stack sizes: iron_key(base)={} lock_iron(base)={}",
@@ -73,7 +72,6 @@ public final class ModItems {
             }
 
         } catch (Throwable t) {
-            // Keep it non-fatal and non-spammy.
             if (LOG.isDebugEnabled()) {
                 LOG.debug("[Locksmith][ModItems] debugLogRegisteredItemsSafe skipped due to early registry state (non-fatal).", t);
             }
@@ -84,16 +82,12 @@ public final class ModItems {
         try {
             if (!(holder instanceof DeferredHolder<?, ?> dh)) return false;
 
-            // Newer NeoForge has isBound(). If not, reflection will fail and we fallback.
             try {
                 var m = dh.getClass().getMethod("isBound");
                 Object res = m.invoke(dh);
                 if (res instanceof Boolean b) return b;
             } catch (Throwable ignored) {
-                // fallback below
             }
-
-            // Fallback: try get() in a controlled way; if it throws, it's not bound yet.
             try {
                 dh.get();
                 return true;

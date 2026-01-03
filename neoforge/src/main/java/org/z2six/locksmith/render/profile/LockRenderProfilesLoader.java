@@ -70,19 +70,39 @@ public final class LockRenderProfilesLoader {
                             ? profObj.getAsJsonObject("render")
                             : new JsonObject();
 
-                    // Defaults vary by type
-                    double defOffsetX = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_OFFSET_X : LockRenderTuning.OFFSET_X;
-                    double defOffsetY = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_OFFSET_Y : LockRenderTuning.OFFSET_Y;
-                    double defOffsetZ = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_OFFSET_Z : LockRenderTuning.OFFSET_Z;
+                    // Type-specific defaults
+                    double defOffsetX;
+                    double defOffsetY;
+                    double defOffsetZ;
+                    float defRotX;
+                    float defRotY;
+                    float defRotZ;
+                    float defScale;
+                    double defHingeLeft;
+                    double defHingeRight;
 
-                    float defRotX = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_ROT_X : LockRenderTuning.ROT_X;
-                    float defRotY = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_ROT_Y : LockRenderTuning.ROT_Y;
-                    float defRotZ = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_ROT_Z : LockRenderTuning.ROT_Z;
-
-                    float defScale = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_SCALE : LockRenderTuning.SCALE;
-
-                    double defHingeLeft = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_NUDGE_LEFT : LockRenderTuning.NUDGE_HINGE_LEFT;
-                    double defHingeRight = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_NUDGE_RIGHT : LockRenderTuning.NUDGE_HINGE_RIGHT;
+                    if (targetType == LockTargetType.CHEST) {
+                        defOffsetX = LockRenderTuning.CHEST_OFFSET_X;
+                        defOffsetY = LockRenderTuning.CHEST_OFFSET_Y;
+                        defOffsetZ = LockRenderTuning.CHEST_OFFSET_Z;
+                        defRotX = LockRenderTuning.CHEST_ROT_X;
+                        defRotY = LockRenderTuning.CHEST_ROT_Y;
+                        defRotZ = LockRenderTuning.CHEST_ROT_Z;
+                        defScale = LockRenderTuning.CHEST_SCALE;
+                        // hinge nudges are not used for chests
+                        defHingeLeft = 0.0;
+                        defHingeRight = 0.0;
+                    } else {
+                        defOffsetX = LockRenderTuning.OFFSET_X;
+                        defOffsetY = LockRenderTuning.OFFSET_Y;
+                        defOffsetZ = LockRenderTuning.OFFSET_Z;
+                        defRotX = LockRenderTuning.ROT_X;
+                        defRotY = LockRenderTuning.ROT_Y;
+                        defRotZ = LockRenderTuning.ROT_Z;
+                        defScale = LockRenderTuning.SCALE;
+                        defHingeLeft = LockRenderTuning.NUDGE_HINGE_LEFT;
+                        defHingeRight = LockRenderTuning.NUDGE_HINGE_RIGHT;
+                    }
 
                     double offsetX = getDoubleOrDefault(renderObj, "offsetX", defOffsetX);
                     double offsetY = getDoubleOrDefault(renderObj, "offsetY", defOffsetY);

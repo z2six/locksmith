@@ -1,19 +1,33 @@
-// neoforge/src/main/java/org/z2six/locksmith/render/DoorLockRenderer.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/render/DoorLockRenderer.java
 package org.z2six.locksmith.render;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import org.joml.Quaternionf;
@@ -24,19 +38,45 @@ import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
 import org.z2six.locksmith.render.profile.LockRenderProfile;
 import org.z2six.locksmith.render.profile.LockTargetType;
 
+import java.lang.reflect.Method;
+
 public final class DoorLockRenderer {
 
     private static final Logger LOG = Constants.LOG;
 
+    /** Used only to throttle debug logging. */
     private static long LAST_DEBUG_AT_TICK = Long.MIN_VALUE;
+
+    // ------------------------------------------------------------------------
+    // Chest render defaults (your “perfect” single-chest settings)
+    // ------------------------------------------------------------------------
+
+    private static final double CHEST_SINGLE_OFFSET_X = -0.025D;
+    private static final double CHEST_SINGLE_OFFSET_Y = 0.05D;
+    private static final double CHEST_SINGLE_OFFSET_Z = 0.45D;
+
+    private static final float CHEST_SINGLE_ROT_X = 0.0F;
+    private static final float CHEST_SINGLE_ROT_Y = 180.0F;
+    private static final float CHEST_SINGLE_ROT_Z = 0.0F;
+
+    private static final float CHEST_SINGLE_SCALE = 0.75F;
+
+    /**
+     * Extra local-X nudge for double chests (relative to the chest front, after facing rotation).
+     * Positive values move the lock to the right when looking at the chest front.
+     */
+    private static final double CHEST_DOUBLE_SHIFT_X = 0.18D;
 
     private DoorLockRenderer() {
     }
 
+    // ------------------------------------------------------------------------
+    // Entry point
+    // ------------------------------------------------------------------------
+
     public static void onRenderLevelStage(RenderLevelStageEvent event) {
         try {
             if (event == null) return;
-
             if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
                 return;
             }
@@ -56,31 +96,42 @@ public final class DoorLockRenderer {
                 return;
             }
 
-            var pose = event.getPoseStack();
+            PoseStack pose = event.getPoseStack();
             if (pose == null) return;
 
             double camX = event.getCamera().getPosition().x;
             double camY = event.getCamera().getPosition().y;
             double camZ = event.getCamera().getPosition().z;
 
-            ItemStack lockStack = new ItemStack(ModItems.LOCK_IRON.get());
+            // Base lock item; we will clone this and optionally add CustomModelData for unlocked frames.
+            final ItemStack baseLockStack = new ItemStack(ModItems.LOCK_IRON.get());
 
+            int rendered = 0;
             boolean doDebugThisTick = false;
+            long nowTick = 0L;
+
             try {
-                long nowTick = mc.level.getGameTime();
-                if (LOG.isDebugEnabled() && (nowTick % 100 == 0) && LAST_DEBUG_AT_TICK != nowTick) {
+                nowTick = level.getGameTime();
+                if (LOG.isDebugEnabled() && (nowTick % 100L == 0L) && LAST_DEBUG_AT_TICK != nowTick) {
                     LAST_DEBUG_AT_TICK = nowTick;
                     doDebugThisTick = true;
                 }
             } catch (Throwable ignored) {
             }
 
-            int renderedDoors = 0;
-            for (long posLong : ClientDoorLockState.getSnapshot().keySet()) {
+            LongSet lockedPositions = buildLockedPositionsUnion();
+            LongIterator it = lockedPositions.iterator();
+
+            while (it.hasNext()) {
+                long posLong = it.nextLong();
+
                 BlockPos pos;
                 try {
                     pos = BlockPos.of(posLong);
                 } catch (Throwable t) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("[Locksmith][DoorLockRenderer] Invalid posLong={} (non-fatal).", posLong, t);
+                    }
                     continue;
                 }
 
@@ -88,264 +139,65 @@ public final class DoorLockRenderer {
                 try {
                     state = level.getBlockState(pos);
                 } catch (Throwable t) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("[Locksmith][DoorLockRenderer] Failed to get BlockState at {} (non-fatal).", pos, t);
+                    }
                     continue;
                 }
 
-                if (!(state.getBlock() instanceof DoorBlock)) {
-                    continue;
-                }
-
-                boolean open;
-                try {
-                    open = state.getValue(DoorBlock.OPEN);
-                } catch (Throwable t) {
-                    continue;
-                }
-                if (open) {
-                    continue;
-                }
-
-                double dx = (pos.getX() + 0.5) - camX;
-                double dy = (pos.getY() + 0.5) - camY;
-                double dz = (pos.getZ() + 0.5) - camZ;
-                double dist2 = dx * dx + dy * dy + dz * dz;
-                if (dist2 > (128.0 * 128.0)) {
-                    continue;
-                }
-
-                Direction facing;
-                DoorHingeSide hinge;
-                try {
-                    facing = state.getValue(DoorBlock.FACING);
-                    hinge = state.getValue(DoorBlock.HINGE);
-                } catch (Throwable t) {
+                Block block = state.getBlock();
+                if (!(block instanceof DoorBlock) && !(block instanceof ChestBlock)) {
+                    // Only doors and chests for now.
                     continue;
                 }
 
                 ResourceLocation blockId = null;
                 try {
-                    blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+                    blockId = BuiltInRegistries.BLOCK.getKey(block);
                 } catch (Throwable ignored) {
                 }
 
-                LockRenderProfile prof = null;
-                if (blockId != null) {
-                    prof = ClientLockRenderProfiles.get(blockId);
-                }
+                boolean renderedThis = false;
 
-                boolean useProfile = (prof != null && prof.isValid() && prof.type == LockTargetType.DOOR);
-
-                double baseOffsetX = useProfile ? prof.offsetX : LockRenderTuning.OFFSET_X;
-                double baseOffsetY = useProfile ? prof.offsetY : LockRenderTuning.OFFSET_Y;
-                double baseOffsetZ = useProfile ? prof.offsetZ : LockRenderTuning.OFFSET_Z;
-
-                float rotX = useProfile ? prof.rotX : LockRenderTuning.ROT_X;
-                float rotY = useProfile ? prof.rotY : LockRenderTuning.ROT_Y;
-                float rotZ = useProfile ? prof.rotZ : LockRenderTuning.ROT_Z;
-
-                float scale = useProfile ? prof.scale : LockRenderTuning.SCALE;
-
-                double hingeLeftMag = useProfile ? prof.hingeNudgeLeft : LockRenderTuning.NUDGE_HINGE_LEFT;
-                double hingeRightMag = useProfile ? prof.hingeNudgeRight : LockRenderTuning.NUDGE_HINGE_RIGHT;
-
-                double hingeSignedNudge = (hinge == DoorHingeSide.LEFT) ? -hingeLeftMag : hingeRightMag;
-
-                double finalX = baseOffsetX + hingeSignedNudge;
-                double finalY = baseOffsetY;
-                double finalZ = baseOffsetZ;
-
-                int light;
-                try {
-                    light = LevelRenderer.getLightColor(level, pos);
-                } catch (Throwable t) {
-                    light = 0x00F000F0;
-                }
-
-                pose.pushPose();
-
-                pose.translate(
-                        pos.getX() - camX + 0.5,
-                        pos.getY() - camY + 0.5,
-                        pos.getZ() - camZ + 0.5
-                );
-
-                float yRot = -facing.toYRot();
-                pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(yRot)));
-
-                if (doDebugThisTick) {
-                    LOG.debug(
-                            "[Locksmith][DoorLockRenderer][DOOR] pos={} blockId={} prof={} facing={} hinge={} yRot={} baseX={} nudge={} finalX={} finalY={} finalZ={} profilesCached={}",
-                            pos,
-                            (blockId == null ? "<null>" : blockId),
-                            (useProfile ? "YES" : "NO"),
-                            facing,
-                            hinge,
-                            yRot,
-                            baseOffsetX,
-                            hingeSignedNudge,
-                            finalX,
-                            finalY,
-                            finalZ,
-                            ClientLockRenderProfiles.size()
-                    );
-                }
-
-                pose.translate(finalX, finalY, finalZ);
-
-                if (rotX != 0) pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(rotX)));
-                if (rotY != 0) pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(rotY)));
-                if (rotZ != 0) pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(rotZ)));
-
-                pose.scale(scale, scale, scale);
-
-                try {
-                    mc.getItemRenderer().renderStatic(
-                            lockStack,
-                            ItemDisplayContext.FIXED,
-                            light,
-                            OverlayTexture.NO_OVERLAY,
-                            pose,
-                            buffer,
+                if (block instanceof DoorBlock) {
+                    renderedThis = renderDoorLock(
+                            mc,
                             level,
-                            0
-                    );
-                } catch (Throwable t) {
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("[Locksmith][DoorLockRenderer] renderStatic failed for DOOR pos={} (non-fatal).", pos, t);
-                    }
-                }
-
-                pose.popPose();
-                renderedDoors++;
-            }
-
-            int renderedChests = 0;
-            for (long posLong : ClientChestLockState.getSnapshot().keySet()) {
-                BlockPos pos;
-                try {
-                    pos = BlockPos.of(posLong);
-                } catch (Throwable t) {
-                    continue;
-                }
-
-                BlockState state;
-                try {
-                    state = level.getBlockState(pos);
-                } catch (Throwable t) {
-                    continue;
-                }
-
-                if (state == null || state.isAir()) {
-                    continue;
-                }
-
-                double dx = (pos.getX() + 0.5) - camX;
-                double dy = (pos.getY() + 0.5) - camY;
-                double dz = (pos.getZ() + 0.5) - camZ;
-                double dist2 = dx * dx + dy * dy + dz * dz;
-                if (dist2 > (128.0 * 128.0)) {
-                    continue;
-                }
-
-                // Facing for chest-like blocks: best-effort. If not found, default NORTH.
-                Direction facing = Direction.NORTH;
-                try {
-                    // Many chest-like blocks use HorizontalDirectionalBlock.FACING or ChestBlock.FACING.
-                    for (var prop : state.getProperties()) {
-                        if (prop instanceof net.minecraft.world.level.block.state.properties.DirectionProperty dp) {
-                            if ("facing".equals(dp.getName())) {
-                                facing = state.getValue(dp);
-                                break;
-                            }
-                        }
-                    }
-                } catch (Throwable ignored) {
-                }
-
-                ResourceLocation blockId = null;
-                try {
-                    blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-                } catch (Throwable ignored) {
-                }
-
-                LockRenderProfile prof = null;
-                if (blockId != null) {
-                    prof = ClientLockRenderProfiles.get(blockId);
-                }
-
-                boolean useProfile = (prof != null && prof.isValid() && prof.type == LockTargetType.CHEST);
-
-                double baseOffsetX = useProfile ? prof.offsetX : LockRenderTuning.CHEST_OFFSET_X;
-                double baseOffsetY = useProfile ? prof.offsetY : LockRenderTuning.CHEST_OFFSET_Y;
-                double baseOffsetZ = useProfile ? prof.offsetZ : LockRenderTuning.CHEST_OFFSET_Z;
-
-                float rotX = useProfile ? prof.rotX : LockRenderTuning.CHEST_ROT_X;
-                float rotY = useProfile ? prof.rotY : LockRenderTuning.CHEST_ROT_Y;
-                float rotZ = useProfile ? prof.rotZ : LockRenderTuning.CHEST_ROT_Z;
-
-                float scale = useProfile ? prof.scale : LockRenderTuning.CHEST_SCALE;
-
-                int light;
-                try {
-                    light = LevelRenderer.getLightColor(level, pos);
-                } catch (Throwable t) {
-                    light = 0x00F000F0;
-                }
-
-                pose.pushPose();
-
-                pose.translate(
-                        pos.getX() - camX + 0.5,
-                        pos.getY() - camY + 0.5,
-                        pos.getZ() - camZ + 0.5
-                );
-
-                // rotate so local Z points outward from "front"
-                float yRot = -facing.toYRot();
-                pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(yRot)));
-
-                if (doDebugThisTick) {
-                    LOG.debug(
-                            "[Locksmith][DoorLockRenderer][CHEST] pos={} blockId={} prof={} facing={} yRot={} finalX={} finalY={} finalZ={} profilesCached={}",
-                            pos,
-                            (blockId == null ? "<null>" : blockId),
-                            (useProfile ? "YES" : "NO"),
-                            facing,
-                            yRot,
-                            baseOffsetX,
-                            baseOffsetY,
-                            baseOffsetZ,
-                            ClientLockRenderProfiles.size()
-                    );
-                }
-
-                pose.translate(baseOffsetX, baseOffsetY, baseOffsetZ);
-
-                if (rotX != 0) pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(rotX)));
-                if (rotY != 0) pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(rotY)));
-                if (rotZ != 0) pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(rotZ)));
-
-                pose.scale(scale, scale, scale);
-
-                try {
-                    mc.getItemRenderer().renderStatic(
-                            lockStack,
-                            ItemDisplayContext.FIXED,
-                            light,
-                            OverlayTexture.NO_OVERLAY,
-                            pose,
                             buffer,
-                            level,
-                            0
+                            pose,
+                            state,
+                            pos,
+                            posLong,
+                            blockId,
+                            camX,
+                            camY,
+                            camZ,
+                            baseLockStack,
+                            nowTick,
+                            doDebugThisTick
                     );
-                } catch (Throwable t) {
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("[Locksmith][DoorLockRenderer] renderStatic failed for CHEST pos={} (non-fatal).", pos, t);
-                    }
+                } else if (block instanceof ChestBlock) {
+                    renderedThis = renderChestLock(
+                            mc,
+                            level,
+                            buffer,
+                            pose,
+                            state,
+                            pos,
+                            posLong,
+                            blockId,
+                            camX,
+                            camY,
+                            camZ,
+                            baseLockStack,
+                            nowTick,
+                            doDebugThisTick
+                    );
                 }
 
-                pose.popPose();
-                renderedChests++;
+                if (renderedThis) {
+                    rendered++;
+                }
             }
 
             try {
@@ -354,12 +206,539 @@ public final class DoorLockRenderer {
                 LOG.debug("[Locksmith][DoorLockRenderer] buffer.endBatch failed (non-fatal).", t);
             }
 
-            if (doDebugThisTick && (renderedDoors > 0 || renderedChests > 0)) {
-                LOG.debug("[Locksmith][DoorLockRenderer] Rendered doors={} chests={} this stage.", renderedDoors, renderedChests);
+            if (rendered > 0 && doDebugThisTick) {
+                LOG.debug("[Locksmith][DoorLockRenderer] Rendered {} lock(s) this stage.", rendered);
             }
-
         } catch (Throwable t) {
             LOG.error("[Locksmith][DoorLockRenderer] onRenderLevelStage failed (non-fatal).", t);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Build union of door + chest client lock positions
+    // ------------------------------------------------------------------------
+
+    private static LongSet buildLockedPositionsUnion() {
+        LongOpenHashSet set = new LongOpenHashSet();
+        try {
+            Long2ObjectMap<String> doorMap = org.z2six.locksmith.render.ClientDoorLockState.getSnapshot();
+            if (doorMap != null && !doorMap.isEmpty()) {
+                set.addAll(doorMap.keySet());
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockRenderer] Failed to read ClientDoorLockState snapshot (non-fatal).", t);
+        }
+
+        // Chest client state is kept separate; we load it reflectively so this file compiles
+        // even if the class name ever changes.
+        try {
+            Class<?> chestCls = Class.forName("org.z2six.locksmith.render.ClientChestLockState");
+            Method m = chestCls.getMethod("getSnapshot");
+            Object res = m.invoke(null);
+            if (res instanceof Long2ObjectMap<?> chestMap && !chestMap.isEmpty()) {
+                Long2ObjectMap<?> map = chestMap;
+                set.addAll(map.keySet());
+            }
+        } catch (ClassNotFoundException ignored) {
+            // No chest client state class present – older build, or feature removed; non-fatal.
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockRenderer] Failed to read ClientChestLockState snapshot (non-fatal).", t);
+        }
+
+        return set;
+    }
+
+    // ------------------------------------------------------------------------
+    // Doors
+    // ------------------------------------------------------------------------
+
+    private static boolean renderDoorLock(
+            Minecraft mc,
+            Level level,
+            MultiBufferSource.BufferSource buffer,
+            PoseStack pose,
+            BlockState state,
+            BlockPos pos,
+            long posLong,
+            ResourceLocation blockId,
+            double camX,
+            double camY,
+            double camZ,
+            ItemStack baseLockStack,
+            long nowTick,
+            boolean doDebugThisTick
+    ) {
+        try {
+            boolean open;
+            Direction facing;
+            DoorHingeSide hinge;
+
+            try {
+                open = state.getValue(DoorBlock.OPEN);
+                facing = state.getValue(DoorBlock.FACING);
+                hinge = state.getValue(DoorBlock.HINGE);
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] Door missing expected properties at {} (non-fatal).", pos, t);
+                }
+                return false;
+            }
+
+            // Fade/frame logic: when open, we step through frames 0..4 then stop rendering.
+            int frameIndex = DoorLockFadeState.getFrameIndex(posLong, open, nowTick);
+
+            ItemStack toRender;
+            float alpha = 1.0F;
+            boolean useAlphaWrapper = false;
+
+            if (!open) {
+                // Door closed: always show locked variant (no custom model, no fade).
+                toRender = baseLockStack.copy();
+            } else {
+                // Door open: show unlocked sequence if we have a valid frame; otherwise, do not render.
+                if (frameIndex < 0) {
+                    // Fade finished or not active.
+                    return false;
+                }
+                toRender = baseLockStack.copy();
+                applyCustomModelData(toRender, frameIndex);
+
+                alpha = computeAlphaFromFrame(frameIndex);
+                if (alpha < 0.999F) {
+                    useAlphaWrapper = true;
+                }
+            }
+
+            // Distance culling
+            double dx = (pos.getX() + 0.5D) - camX;
+            double dy = (pos.getY() + 0.5D) - camY;
+            double dz = (pos.getZ() + 0.5D) - camZ;
+            double dist2 = dx * dx + dy * dy + dz * dz;
+            if (dist2 > (128.0D * 128.0D)) {
+                return false;
+            }
+
+            // Profile (if present) supplies offsets/rotations/hinge nudges.
+            LockRenderProfile profile = null;
+            try {
+                if (blockId != null) {
+                    profile = ClientLockRenderProfiles.get(blockId);
+                }
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] Failed to read profile for blockId={} (non-fatal).", blockId, t);
+                }
+            }
+
+            boolean useProfile = profile != null && profile.isValid()
+                    && (profile.type == null || profile.type == LockTargetType.DOOR);
+
+            double baseOffsetX = useProfile ? profile.offsetX : LockRenderTuning.OFFSET_X;
+            double baseOffsetY = useProfile ? profile.offsetY : LockRenderTuning.OFFSET_Y;
+            double baseOffsetZ = useProfile ? profile.offsetZ : LockRenderTuning.OFFSET_Z;
+
+            float rotX = useProfile ? profile.rotX : LockRenderTuning.ROT_X;
+            float rotY = useProfile ? profile.rotY : LockRenderTuning.ROT_Y;
+            float rotZ = useProfile ? profile.rotZ : LockRenderTuning.ROT_Z;
+
+            float scale = useProfile ? profile.scale : LockRenderTuning.SCALE;
+
+            double hingeLeftMag = useProfile ? profile.hingeNudgeLeft : LockRenderTuning.NUDGE_HINGE_LEFT;
+            double hingeRightMag = useProfile ? profile.hingeNudgeRight : LockRenderTuning.NUDGE_HINGE_RIGHT;
+            double hingeSignedNudge = (hinge == DoorHingeSide.LEFT) ? -hingeLeftMag : hingeRightMag;
+
+            double finalX = baseOffsetX + hingeSignedNudge;
+            double finalY = baseOffsetY;
+            double finalZ = baseOffsetZ;
+
+            int light;
+            try {
+                light = LevelRenderer.getLightColor(level, pos);
+            } catch (Throwable t) {
+                light = 0x00F000F0;
+            }
+
+            pose.pushPose();
+            pose.translate(
+                    pos.getX() - camX + 0.5D,
+                    pos.getY() - camY + 0.5D,
+                    pos.getZ() - camZ + 0.5D
+            );
+
+            float yRot = -facing.toYRot();
+            pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(yRot)));
+
+            if (doDebugThisTick) {
+                LOG.debug(
+                        "[Locksmith][DoorLockRenderer] DOOR pos={} blockId={} prof={} facing={} hinge={} open={} frame={} alpha={} yRot={} baseX={} nudge={} finalX={} finalY={} finalZ={} profilesCached={}",
+                        pos,
+                        (blockId == null ? "<null>" : blockId),
+                        (useProfile ? "YES" : "NO"),
+                        facing,
+                        hinge,
+                        open,
+                        frameIndex,
+                        alpha,
+                        yRot,
+                        baseOffsetX,
+                        hingeSignedNudge,
+                        finalX,
+                        finalY,
+                        finalZ,
+                        ClientLockRenderProfiles.size()
+                );
+            }
+
+            pose.translate(finalX, finalY, finalZ);
+
+            if (rotX != 0.0F) pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(rotX)));
+            if (rotY != 0.0F) pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(rotY)));
+            if (rotZ != 0.0F) pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(rotZ)));
+
+            pose.scale(scale, scale, scale);
+
+            MultiBufferSource usedBuffer = buffer;
+            if (useAlphaWrapper) {
+                usedBuffer = new AlphaMultiBufferSource(buffer, alpha);
+            }
+
+            try {
+                mc.getItemRenderer().renderStatic(
+                        toRender,
+                        ItemDisplayContext.FIXED,
+                        light,
+                        OverlayTexture.NO_OVERLAY,
+                        pose,
+                        usedBuffer,
+                        level,
+                        0
+                );
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] renderStatic failed for door pos={} (non-fatal).", pos, t);
+                }
+            }
+
+            pose.popPose();
+            return true;
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockRenderer] renderDoorLock failed (non-fatal). posLong={}", posLong, t);
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Chests
+    // ------------------------------------------------------------------------
+
+    private static boolean renderChestLock(
+            Minecraft mc,
+            Level level,
+            MultiBufferSource.BufferSource buffer,
+            PoseStack pose,
+            BlockState state,
+            BlockPos pos,
+            long posLong,
+            ResourceLocation blockId,
+            double camX,
+            double camY,
+            double camZ,
+            ItemStack baseLockStack,
+            long nowTick,
+            boolean doDebugThisTick
+    ) {
+        try {
+            // Determine if the chest is open via its block entity.
+            boolean open = false;
+            try {
+                BlockEntity be = level.getBlockEntity(pos);
+                if (be instanceof ChestBlockEntity chestBe) {
+                    float openness = chestBe.getOpenNess(0.0F);
+                    open = openness > 0.0F;
+                }
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] Chest open-ness check failed at {} (non-fatal).", pos, t);
+                }
+            }
+
+            // Fade/frame logic identical to doors.
+            int frameIndex = DoorLockFadeState.getFrameIndex(posLong, open, nowTick);
+
+            ItemStack toRender;
+            float alpha = 1.0F;
+            boolean useAlphaWrapper = false;
+
+            if (!open) {
+                // Closed chest: locked variant only.
+                toRender = baseLockStack.copy();
+            } else {
+                if (frameIndex < 0) {
+                    // Fade complete / not active.
+                    return false;
+                }
+                toRender = baseLockStack.copy();
+                applyCustomModelData(toRender, frameIndex);
+
+                alpha = computeAlphaFromFrame(frameIndex);
+                if (alpha < 0.999F) {
+                    useAlphaWrapper = true;
+                }
+            }
+
+            // Distance culling
+            double dx = (pos.getX() + 0.5D) - camX;
+            double dy = (pos.getY() + 0.5D) - camY;
+            double dz = (pos.getZ() + 0.5D) - camZ;
+            double dist2 = dx * dx + dy * dy + dz * dz;
+            if (dist2 > (128.0D * 128.0D)) {
+                return false;
+            }
+
+            Direction facing;
+            ChestType type;
+            try {
+                facing = state.getValue(ChestBlock.FACING);
+                type = state.getValue(ChestBlock.TYPE);
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] Chest missing expected properties at {} (non-fatal).", pos, t);
+                }
+                return false;
+            }
+
+            // Chest profile (if present) for offsets/rotations/scale.
+            LockRenderProfile profile = null;
+            try {
+                if (blockId != null) {
+                    profile = ClientLockRenderProfiles.get(blockId);
+                }
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] Failed to read chest profile for blockId={} (non-fatal).", blockId, t);
+                }
+            }
+
+            boolean useProfile = profile != null && profile.isValid()
+                    && (profile.type == null || profile.type == LockTargetType.CHEST);
+
+            double baseOffsetX = useProfile ? profile.offsetX : CHEST_SINGLE_OFFSET_X;
+            double baseOffsetY = useProfile ? profile.offsetY : CHEST_SINGLE_OFFSET_Y;
+            double baseOffsetZ = useProfile ? profile.offsetZ : CHEST_SINGLE_OFFSET_Z;
+
+            float rotX = useProfile ? profile.rotX : CHEST_SINGLE_ROT_X;
+            float rotY = useProfile ? profile.rotY : CHEST_SINGLE_ROT_Y;
+            float rotZ = useProfile ? profile.rotZ : CHEST_SINGLE_ROT_Z;
+
+            float scale = useProfile ? profile.scale : CHEST_SINGLE_SCALE;
+
+            // Double chest nudge: move toward the center seam when looking at the chest front.
+            double finalX = baseOffsetX;
+            if (type != ChestType.SINGLE) {
+                double shift = CHEST_DOUBLE_SHIFT_X;
+                if (type == ChestType.LEFT) {
+                    finalX += shift;
+                } else if (type == ChestType.RIGHT) {
+                    finalX -= shift;
+                }
+            }
+
+            double finalY = baseOffsetY;
+            double finalZ = baseOffsetZ;
+
+            int light;
+            try {
+                light = LevelRenderer.getLightColor(level, pos);
+            } catch (Throwable t) {
+                light = 0x00F000F0;
+            }
+
+            pose.pushPose();
+            pose.translate(
+                    pos.getX() - camX + 0.5D,
+                    pos.getY() - camY + 0.5D,
+                    pos.getZ() - camZ + 0.5D
+            );
+
+            float yRot = -facing.toYRot();
+            pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(yRot)));
+
+            if (doDebugThisTick) {
+                LOG.debug(
+                        "[Locksmith][DoorLockRenderer] CHEST pos={} blockId={} prof={} facing={} type={} open={} frame={} alpha={} yRot={} baseX={} finalX={} finalY={} finalZ={} profilesCached={}",
+                        pos,
+                        (blockId == null ? "<null>" : blockId),
+                        (useProfile ? "YES" : "NO"),
+                        facing,
+                        type,
+                        open,
+                        frameIndex,
+                        alpha,
+                        yRot,
+                        baseOffsetX,
+                        finalX,
+                        finalY,
+                        finalZ,
+                        ClientLockRenderProfiles.size()
+                );
+            }
+
+            pose.translate(finalX, finalY, finalZ);
+
+            if (rotX != 0.0F) pose.mulPose(new Quaternionf().rotateX((float) Math.toRadians(rotX)));
+            if (rotY != 0.0F) pose.mulPose(new Quaternionf().rotateY((float) Math.toRadians(rotY)));
+            if (rotZ != 0.0F) pose.mulPose(new Quaternionf().rotateZ((float) Math.toRadians(rotZ)));
+            pose.scale(scale, scale, scale);
+
+            MultiBufferSource usedBuffer = buffer;
+            if (useAlphaWrapper) {
+                usedBuffer = new AlphaMultiBufferSource(buffer, alpha);
+            }
+
+            try {
+                mc.getItemRenderer().renderStatic(
+                        toRender,
+                        ItemDisplayContext.FIXED,
+                        light,
+                        OverlayTexture.NO_OVERLAY,
+                        pose,
+                        usedBuffer,
+                        level,
+                        0
+                );
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockRenderer] renderStatic failed for chest pos={} (non-fatal).", pos, t);
+                }
+            }
+
+            pose.popPose();
+            return true;
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockRenderer] renderChestLock failed (non-fatal). posLong={}", posLong, t);
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------------
+
+    /**
+     * Apply CustomModelData for unlocked frames (0..4) on 1.21.1.
+     * Your item model overrides:
+     *   custom_model_data 0..4 → lock_iron_unlocked0..4
+     */
+    private static void applyCustomModelData(ItemStack stack, int frameIndex) {
+        try {
+            if (stack == null || stack.isEmpty()) return;
+            if (frameIndex < 0) return;
+
+            stack.set(DataComponents.CUSTOM_MODEL_DATA, new CustomModelData(frameIndex));
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockRenderer] applyCustomModelData failed (non-fatal). frameIndex={}", frameIndex, t);
+        }
+    }
+
+    /**
+     * Map frame index → alpha. We have 5 frames (0..4) over ~20 ticks (4 ticks per frame),
+     * and we want the fade to happen in lockstep with the animation:
+     *   frame 0 → alpha 1.0
+     *   frame 1 → alpha 0.8
+     *   frame 2 → alpha 0.6
+     *   frame 3 → alpha 0.4
+     *   frame 4 → alpha 0.2
+     */
+    private static float computeAlphaFromFrame(int frameIndex) {
+        return switch (frameIndex) {
+            case 0 -> 1.0F;
+            case 1 -> 0.8F;
+            case 2 -> 0.6F;
+            case 3 -> 0.4F;
+            default -> 0.2F;
+        };
+    }
+
+    // ------------------------------------------------------------------------
+    // Alpha wrappers (1.21.1 VertexConsumer API: setColor/setUv/setUv1/setUv2/setNormal/addVertex)
+    // ------------------------------------------------------------------------
+
+    private static final class AlphaMultiBufferSource implements MultiBufferSource {
+
+        private final MultiBufferSource delegate;
+        private final float alpha;
+
+        AlphaMultiBufferSource(MultiBufferSource delegate, float alpha) {
+            this.delegate = delegate;
+            this.alpha = alpha;
+        }
+
+        @Override
+        public VertexConsumer getBuffer(RenderType type) {
+            VertexConsumer base = delegate.getBuffer(type);
+            return new AlphaVertexConsumer(base, alpha);
+        }
+    }
+
+    private static final class AlphaVertexConsumer implements VertexConsumer {
+
+        private final VertexConsumer delegate;
+        private final float alpha;
+
+        AlphaVertexConsumer(VertexConsumer delegate, float alpha) {
+            this.delegate = delegate;
+            this.alpha = alpha;
+        }
+
+        @Override
+        public VertexConsumer setColor(int r, int g, int b, int a) {
+            int newA = (int) (a * alpha);
+            if (newA < 0) newA = 0;
+            if (newA > 255) newA = 255;
+            return delegate.setColor(r, g, b, newA);
+        }
+
+        @Override
+        public VertexConsumer setUv(float u, float v) {
+            return delegate.setUv(u, v);
+        }
+
+        @Override
+        public VertexConsumer setUv1(int u, int v) {
+            return delegate.setUv1(u, v);
+        }
+
+        @Override
+        public VertexConsumer setUv2(int u, int v) {
+            return delegate.setUv2(u, v);
+        }
+
+        @Override
+        public VertexConsumer setNormal(float x, float y, float z) {
+            return delegate.setNormal(x, y, z);
+        }
+
+        @Override
+        public VertexConsumer addVertex(float x, float y, float z) {
+            return delegate.addVertex(x, y, z);
+        }
+
+        @Override
+        public VertexConsumer setColor(float r, float g, float b, float a) {
+            float newA = a * alpha;
+            if (newA < 0.0F) newA = 0.0F;
+            if (newA > 1.0F) newA = 1.0F;
+            return delegate.setColor(r, g, b, newA);
+        }
+
+        @Override
+        public VertexConsumer setColor(int argb) {
+            int a = (argb >>> 24) & 0xFF;
+            int newA = (int) (a * alpha);
+            if (newA < 0) newA = 0;
+            if (newA > 255) newA = 255;
+            int newArgb = (argb & 0x00FFFFFF) | (newA << 24);
+            return delegate.setColor(newArgb);
         }
     }
 }

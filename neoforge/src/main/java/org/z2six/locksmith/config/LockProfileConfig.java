@@ -105,12 +105,11 @@ public final class LockProfileConfig {
             chestProfile.add("blocks", chestBlocks);
 
             JsonObject chestRender = new JsonObject();
-            chestRender.addProperty("offsetX", 0.0);
-            chestRender.addProperty("offsetY", 0.35);
-            // Put lock on the "front" of the chest by default (opposite side of current -0.45)
+            chestRender.addProperty("offsetX", -0.025);
+            chestRender.addProperty("offsetY", 0.05);
             chestRender.addProperty("offsetZ", 0.45);
             chestRender.addProperty("rotX", 0.0);
-            chestRender.addProperty("rotY", 0.0);
+            chestRender.addProperty("rotY", 180.0);
             chestRender.addProperty("rotZ", 0.0);
             chestRender.addProperty("scale", 0.75);
             chestProfile.add("render", chestRender);
