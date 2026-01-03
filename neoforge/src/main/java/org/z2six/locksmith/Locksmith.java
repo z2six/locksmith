@@ -7,13 +7,18 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
+import org.z2six.locksmith.client.ClientInit;
 import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.config.LocksmithClientConfig;
+import org.z2six.locksmith.event.LocksmithChestEvents;
 import org.z2six.locksmith.event.LocksmithDoorEvents;
+import org.z2six.locksmith.event.LocksmithProfileSyncEvents;
 import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
 import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.registry.ModRecipeSerializers;
+
+import net.neoforged.fml.common.Mod;
 
 @Mod(Constants.MOD_ID)
 public class Locksmith {
@@ -23,7 +28,6 @@ public class Locksmith {
         LOG.info("[Locksmith] Hello NeoForge world! Bootstrapping common init...");
         CommonClass.init();
 
-        // Ensure the server-authoritative lock profile JSON exists as early as possible
         try {
             LockProfileConfig.ensureDefaultFileExists();
             LOG.info("[Locksmith] Ensured lock profile config exists at startup.");
@@ -49,7 +53,6 @@ public class Locksmith {
             LOG.error("[Locksmith] FAILED to register item DeferredRegister (this is bad).", t);
         }
 
-        // NEW: recipe serializers (required for iron_key_mint recipe)
         try {
             ModRecipeSerializers.RECIPE_SERIALIZERS.register(eventBus);
             LOG.info("[Locksmith] Registered DeferredRegister for recipe serializers.");
@@ -72,20 +75,30 @@ public class Locksmith {
         }
 
         try {
+            // Doors
             NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithDoorEvents::onRightClickBlock);
-
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onPlayerLoggedIn);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onBlockBreak);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onExplosionDetonate);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onServerTick);
 
-            LOG.info("[Locksmith] Registered door lock gameplay events (and cleanup hooks).");
+            // Chests
+            NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithChestEvents::onRightClickBlock);
+            NeoForge.EVENT_BUS.addListener(LocksmithChestEvents::onPlayerLoggedIn);
+            NeoForge.EVENT_BUS.addListener(LocksmithChestEvents::onBlockBreak);
+            NeoForge.EVENT_BUS.addListener(LocksmithChestEvents::onExplosionDetonate);
+
+            // Profiles -> client cache (used for both render + type gating client-side)
+            NeoForge.EVENT_BUS.addListener(LocksmithProfileSyncEvents::onPlayerLoggedIn);
+
+            LOG.info("[Locksmith] Registered door + chest lock gameplay events (and cleanup hooks).");
         } catch (Throwable t) {
             LOG.error("[Locksmith] FAILED to register gameplay events (this is bad).", t);
         }
 
         try {
             if (FMLEnvironment.dist.isClient()) {
+                // keep existing reflection pattern
                 Class<?> clazz = Class.forName("org.z2six.locksmith.client.ClientInit");
                 clazz.getMethod("init").invoke(null);
             }

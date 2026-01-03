@@ -1,4 +1,4 @@
-// MainFile: neoforge/src/main/java/org/z2six/locksmith/network/LocksmithPayloads.java
+// neoforge/src/main/java/org/z2six/locksmith/network/LocksmithPayloads.java
 package org.z2six.locksmith.network;
 
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -16,6 +16,7 @@ public final class LocksmithPayloads {
         try {
             final var registrar = event.registrar(Constants.MOD_ID).versioned("1");
 
+            // C2S
             registrar.playToServer(
                     RegisterIronKeyPayload.TYPE,
                     RegisterIronKeyPayload.STREAM_CODEC,
@@ -26,7 +27,13 @@ public final class LocksmithPayloads {
                     LockDoorPayload.STREAM_CODEC,
                     LockDoorPayload::handle
             );
+            registrar.playToServer(
+                    LockChestPayload.TYPE,
+                    LockChestPayload.STREAM_CODEC,
+                    LockChestPayload::handle
+            );
 
+            // S2C (doors)
             registrar.playToClient(
                     SyncDoorLocksPayload.TYPE,
                     SyncDoorLocksPayload.STREAM_CODEC,
@@ -43,7 +50,24 @@ public final class LocksmithPayloads {
                     RemoveDoorLockPayload::handle
             );
 
-            // NEW: render profile sync (server-authoritative visual config)
+            // S2C (chests)
+            registrar.playToClient(
+                    SyncChestLocksPayload.TYPE,
+                    SyncChestLocksPayload.STREAM_CODEC,
+                    SyncChestLocksPayload::handle
+            );
+            registrar.playToClient(
+                    AddChestLockPayload.TYPE,
+                    AddChestLockPayload.STREAM_CODEC,
+                    AddChestLockPayload::handle
+            );
+            registrar.playToClient(
+                    RemoveChestLockPayload.TYPE,
+                    RemoveChestLockPayload.STREAM_CODEC,
+                    RemoveChestLockPayload::handle
+            );
+
+            // Profiles
             registrar.playToClient(
                     SyncLockRenderProfilesPayload.TYPE,
                     SyncLockRenderProfilesPayload.STREAM_CODEC,

@@ -1,4 +1,4 @@
-// MainFile: neoforge/src/main/java/org/z2six/locksmith/config/LockProfileConfig.java
+// neoforge/src/main/java/org/z2six/locksmith/config/LockProfileConfig.java
 package org.z2six.locksmith.config;
 
 import com.google.gson.Gson;
@@ -14,12 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * Server-authoritative lock placement profiles.
- * - Lives in: <game root>/config/locksmith_profiles.json
- * - Currently only generates a default "vanilla_doors" profile.
- * - Later we can extend this to actually load/parse and feed the renderer.
- */
 public final class LockProfileConfig {
 
     private static final Logger LOG = Constants.LOG;
@@ -34,15 +28,10 @@ public final class LockProfileConfig {
             return configDir.resolve(FILE_NAME);
         } catch (Throwable t) {
             LOG.error("[Locksmith][LockProfileConfig] Failed to resolve config dir (non-fatal).", t);
-            // Fallback: drop it in the working dir
             return Path.of(FILE_NAME);
         }
     }
 
-    /**
-     * If the JSON config does not exist yet, writes a default one containing
-     * a single "vanilla_doors" profile with your current LockRenderTuning values.
-     */
     public static void ensureDefaultFileExists() {
         try {
             Path path = getConfigPath();
@@ -68,38 +57,66 @@ public final class LockProfileConfig {
             JsonObject root = new JsonObject();
             JsonArray profiles = new JsonArray();
 
-            // Default profile for vanilla doors using your current LockRenderTuning values.
+            // -------------------------
+            // Default profile: vanilla doors
+            // -------------------------
             JsonObject doorProfile = new JsonObject();
             doorProfile.addProperty("id", "vanilla_doors");
             doorProfile.addProperty("type", "door");
 
-            JsonArray blocks = new JsonArray();
-            blocks.add("minecraft:oak_door");
-            blocks.add("minecraft:spruce_door");
-            blocks.add("minecraft:birch_door");
-            blocks.add("minecraft:jungle_door");
-            blocks.add("minecraft:acacia_door");
-            blocks.add("minecraft:dark_oak_door");
-            blocks.add("minecraft:mangrove_door");
-            blocks.add("minecraft:cherry_door");
-            blocks.add("minecraft:bamboo_door");
-            blocks.add("minecraft:crimson_door");
-            blocks.add("minecraft:warped_door");
-            doorProfile.add("blocks", blocks);
+            JsonArray doorBlocks = new JsonArray();
+            doorBlocks.add("minecraft:oak_door");
+            doorBlocks.add("minecraft:spruce_door");
+            doorBlocks.add("minecraft:birch_door");
+            doorBlocks.add("minecraft:jungle_door");
+            doorBlocks.add("minecraft:acacia_door");
+            doorBlocks.add("minecraft:dark_oak_door");
+            doorBlocks.add("minecraft:mangrove_door");
+            doorBlocks.add("minecraft:cherry_door");
+            doorBlocks.add("minecraft:bamboo_door");
+            doorBlocks.add("minecraft:crimson_door");
+            doorBlocks.add("minecraft:warped_door");
+            doorProfile.add("blocks", doorBlocks);
 
-            JsonObject render = new JsonObject();
-            render.addProperty("offsetX", -0.05);
-            render.addProperty("offsetY", 0.5);
-            render.addProperty("offsetZ", -0.5);
-            render.addProperty("rotX", 0.0);
-            render.addProperty("rotY", 0.0);
-            render.addProperty("rotZ", 0.0);
-            render.addProperty("scale", 0.75);
-            render.addProperty("hingeNudgeLeft", 0.18);
-            render.addProperty("hingeNudgeRight", 0.325);
-            doorProfile.add("render", render);
+            JsonObject doorRender = new JsonObject();
+            doorRender.addProperty("offsetX", -0.05);
+            doorRender.addProperty("offsetY", 0.5);
+            doorRender.addProperty("offsetZ", -0.5);
+            doorRender.addProperty("rotX", 0.0);
+            doorRender.addProperty("rotY", 0.0);
+            doorRender.addProperty("rotZ", 0.0);
+            doorRender.addProperty("scale", 0.75);
+            doorRender.addProperty("hingeNudgeLeft", 0.18);
+            doorRender.addProperty("hingeNudgeRight", 0.325);
+            doorProfile.add("render", doorRender);
 
             profiles.add(doorProfile);
+
+            // -------------------------
+            // Default profile: vanilla chests
+            // -------------------------
+            JsonObject chestProfile = new JsonObject();
+            chestProfile.addProperty("id", "vanilla_chests");
+            chestProfile.addProperty("type", "chest");
+
+            JsonArray chestBlocks = new JsonArray();
+            chestBlocks.add("minecraft:chest");
+            chestBlocks.add("minecraft:trapped_chest");
+            chestProfile.add("blocks", chestBlocks);
+
+            JsonObject chestRender = new JsonObject();
+            chestRender.addProperty("offsetX", 0.0);
+            chestRender.addProperty("offsetY", 0.35);
+            // Put lock on the "front" of the chest by default (opposite side of current -0.45)
+            chestRender.addProperty("offsetZ", 0.45);
+            chestRender.addProperty("rotX", 0.0);
+            chestRender.addProperty("rotY", 0.0);
+            chestRender.addProperty("rotZ", 0.0);
+            chestRender.addProperty("scale", 0.75);
+            chestProfile.add("render", chestRender);
+
+            profiles.add(chestProfile);
+
             root.add("profiles", profiles);
             root.addProperty(
                     "_comment",

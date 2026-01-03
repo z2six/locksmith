@@ -1,4 +1,4 @@
-// MainFile: neoforge/src/main/java/org/z2six/locksmith/render/profile/LockRenderProfilesLoader.java
+// neoforge/src/main/java/org/z2six/locksmith/render/profile/LockRenderProfilesLoader.java
 package org.z2six.locksmith.render.profile;
 
 import com.google.gson.*;
@@ -16,10 +16,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
-/**
- * Responsible for reading locksmith_profiles.json and turning it into
- * a flat {@code Map<ResourceLocation, LockRenderProfile>} keyed by block ID.
- */
 public final class LockRenderProfilesLoader {
 
     private static final Logger LOG = Constants.LOG;
@@ -74,18 +70,32 @@ public final class LockRenderProfilesLoader {
                             ? profObj.getAsJsonObject("render")
                             : new JsonObject();
 
-                    double offsetX = getDoubleOrDefault(renderObj, "offsetX", LockRenderTuning.OFFSET_X);
-                    double offsetY = getDoubleOrDefault(renderObj, "offsetY", LockRenderTuning.OFFSET_Y);
-                    double offsetZ = getDoubleOrDefault(renderObj, "offsetZ", LockRenderTuning.OFFSET_Z);
+                    // Defaults vary by type
+                    double defOffsetX = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_OFFSET_X : LockRenderTuning.OFFSET_X;
+                    double defOffsetY = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_OFFSET_Y : LockRenderTuning.OFFSET_Y;
+                    double defOffsetZ = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_OFFSET_Z : LockRenderTuning.OFFSET_Z;
 
-                    float rotX = (float) getDoubleOrDefault(renderObj, "rotX", LockRenderTuning.ROT_X);
-                    float rotY = (float) getDoubleOrDefault(renderObj, "rotY", LockRenderTuning.ROT_Y);
-                    float rotZ = (float) getDoubleOrDefault(renderObj, "rotZ", LockRenderTuning.ROT_Z);
+                    float defRotX = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_ROT_X : LockRenderTuning.ROT_X;
+                    float defRotY = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_ROT_Y : LockRenderTuning.ROT_Y;
+                    float defRotZ = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_ROT_Z : LockRenderTuning.ROT_Z;
 
-                    float scale = (float) getDoubleOrDefault(renderObj, "scale", LockRenderTuning.SCALE);
+                    float defScale = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_SCALE : LockRenderTuning.SCALE;
 
-                    double hingeLeft = getDoubleOrDefault(renderObj, "hingeNudgeLeft", LockRenderTuning.NUDGE_HINGE_LEFT);
-                    double hingeRight = getDoubleOrDefault(renderObj, "hingeNudgeRight", LockRenderTuning.NUDGE_HINGE_RIGHT);
+                    double defHingeLeft = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_NUDGE_LEFT : LockRenderTuning.NUDGE_HINGE_LEFT;
+                    double defHingeRight = (targetType == LockTargetType.CHEST) ? LockRenderTuning.CHEST_NUDGE_RIGHT : LockRenderTuning.NUDGE_HINGE_RIGHT;
+
+                    double offsetX = getDoubleOrDefault(renderObj, "offsetX", defOffsetX);
+                    double offsetY = getDoubleOrDefault(renderObj, "offsetY", defOffsetY);
+                    double offsetZ = getDoubleOrDefault(renderObj, "offsetZ", defOffsetZ);
+
+                    float rotX = (float) getDoubleOrDefault(renderObj, "rotX", defRotX);
+                    float rotY = (float) getDoubleOrDefault(renderObj, "rotY", defRotY);
+                    float rotZ = (float) getDoubleOrDefault(renderObj, "rotZ", defRotZ);
+
+                    float scale = (float) getDoubleOrDefault(renderObj, "scale", defScale);
+
+                    double hingeLeft = getDoubleOrDefault(renderObj, "hingeNudgeLeft", defHingeLeft);
+                    double hingeRight = getDoubleOrDefault(renderObj, "hingeNudgeRight", defHingeRight);
 
                     JsonElement blocksEl = profObj.get("blocks");
                     if (blocksEl == null || !blocksEl.isJsonArray()) {
