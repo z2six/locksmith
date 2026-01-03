@@ -1,4 +1,4 @@
-// neoforge/src/main/java/org/z2six/locksmith/recipe/IronKeyMintRecipe.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/recipe/IronKeyMintRecipe.java
 package org.z2six.locksmith.recipe;
 
 import net.minecraft.core.HolderLookup;
@@ -25,9 +25,15 @@ import org.z2six.locksmith.util.ItemStackDataUtil;
  *
  * Consumption:
  * - Unregistered key is consumed.
- * - Registered key is NOT consumed; it remains in the grid and is marked as "(Master)".
+ * - Registered key is NOT consumed; it remains in the grid.
  *
- * This uses getRemainingItems to return the master key back into the grid (bucket-like behavior).
+ * Role rules:
+ * - Output is always ROLE_COPIED.
+ * - The source key is returned unchanged EXCEPT:
+ *   - If the source key is NOT ROLE_COPIED, we mark it ROLE_MASTER for tooltip clarity.
+ *   - If the source key IS ROLE_COPIED, we DO NOT promote it to master.
+ *
+ * This uses getRemainingItems to return the source key back into the grid (bucket-like behavior).
  */
 public class IronKeyMintRecipe extends CustomRecipe {
 
@@ -125,8 +131,11 @@ public class IronKeyMintRecipe extends CustomRecipe {
                 return ItemStack.EMPTY;
             }
 
-            LOG.debug("[Locksmith][IronKeyMintRecipe] assemble: produced copied key (hashLen={}, by='{}').",
-                    hash.length(), by);
+            if (LOG.isDebugEnabled()) {
+                String srcRole = IronKeyItem.getRoleOrEmpty(regStack);
+                LOG.debug("[Locksmith][IronKeyMintRecipe] assemble: produced copied key (hashLen={}, by='{}', sourceRole='{}').",
+                        hash.length(), by, (srcRole == null ? "" : srcRole));
+            }
 
             return out;
         } catch (Throwable t) {
@@ -166,21 +175,49 @@ public class IronKeyMintRecipe extends CustomRecipe {
                 }
             }
 
-            // Return the registered key back (marked Master), consume blank key.
+            // Return the registered key back, consume blank key.
             if (registeredPos != null) {
                 ItemStack reg = safeGet(input, registeredPos.x, registeredPos.y);
-                ItemStack masterReturned = reg.copy();
-                masterReturned.setCount(1);
+                ItemStack returned = reg.copy();
+                returned.setCount(1);
 
-                // Mark as master for tooltip
-                boolean wroteRole = ItemStackDataUtil.putString(masterReturned, IronKeyItem.DATA_KEY_ROLE, IronKeyItem.ROLE_MASTER);
-                if (!wroteRole) {
-                    LOG.warn("[Locksmith][IronKeyMintRecipe] getRemainingItems: failed to mark master role (non-fatal).");
+                // IMPORTANT FIX:
+                // Do NOT promote copied keys to master.
+                // Only mark as master if the role is blank/unknown or already master.
+                String role = null;
+                try {
+                    role = IronKeyItem.getRoleOrEmpty(returned);
+                } catch (Throwable t) {
+                    role = "";
+                    LOG.warn("[Locksmith][IronKeyMintRecipe] getRemainingItems: failed reading role (non-fatal).", t);
+                }
+                if (role == null) role = "";
+
+                boolean isCopied = IronKeyItem.ROLE_COPIED.equalsIgnoreCase(role);
+                boolean isMaster = IronKeyItem.ROLE_MASTER.equalsIgnoreCase(role);
+
+                if (!isCopied) {
+                    // If it’s already master, keep it. If blank/unknown, upgrade to master for clarity.
+                    if (!isMaster) {
+                        boolean wroteRole = ItemStackDataUtil.putString(returned, IronKeyItem.DATA_KEY_ROLE, IronKeyItem.ROLE_MASTER);
+                        if (!wroteRole) {
+                            LOG.warn("[Locksmith][IronKeyMintRecipe] getRemainingItems: failed to mark master role (non-fatal).");
+                        } else if (LOG.isDebugEnabled()) {
+                            LOG.debug("[Locksmith][IronKeyMintRecipe] getRemainingItems: marked source key as MASTER (prevRole='{}').", role);
+                        }
+                    } else if (LOG.isDebugEnabled()) {
+                        LOG.debug("[Locksmith][IronKeyMintRecipe] getRemainingItems: source key already MASTER; leaving unchanged.");
+                    }
+                } else {
+                    // Copied key stays copied.
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("[Locksmith][IronKeyMintRecipe] getRemainingItems: source key is COPIED; not promoting to MASTER.");
+                    }
                 }
 
                 int idx = registeredPos.y * w + registeredPos.x;
                 if (idx >= 0 && idx < remaining.size()) {
-                    remaining.set(idx, masterReturned);
+                    remaining.set(idx, returned);
                 }
             }
 

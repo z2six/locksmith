@@ -21,7 +21,7 @@ import java.util.List;
  * Iron Key:
  * - Tooltip:
  *    - Unregistered -> "Unregistered"
- *    - Registered -> "Registered by: <name>" + optional "(Master)" / "(Copied)"
+ *    - Registered -> "Registered by: name" + optional "(Master)" / "(Copied)"
  * - RMB while held in MAIN hand opens registration GUI (client-side only) if unregistered.
  * - Stack size rules:
  *    - Unregistered -> stackable up to 64
