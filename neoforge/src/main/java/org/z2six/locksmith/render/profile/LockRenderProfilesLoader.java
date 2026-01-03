@@ -1,4 +1,4 @@
-// neoforge/src/main/java/org/z2six/locksmith/render/profile/LockRenderProfilesLoader.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/render/profile/LockRenderProfilesLoader.java
 package org.z2six.locksmith.render.profile;
 
 import com.google.gson.*;
@@ -7,7 +7,6 @@ import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.config.LockProfileConfig;
-import org.z2six.locksmith.render.LockRenderTuning;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -16,6 +15,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
+/**
+ * Loads server-authoritative lock render profiles from locksmith_profiles.json.
+ *
+ * For CHEST profiles:
+ * - JSON key "doubleNudgeX" is mapped into hingeNudgeLeft/hingeNudgeRight,
+ *   so it rides along the existing S2C path without adding new fields.
+ *
+ * For DOOR profiles:
+ * - JSON keys "hingeNudgeLeft"/"hingeNudgeRight" are used as before.
+ */
 public final class LockRenderProfilesLoader {
 
     private static final Logger LOG = Constants.LOG;
@@ -30,23 +39,24 @@ public final class LockRenderProfilesLoader {
 
         try {
             if (!Files.exists(path)) {
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("[Locksmith][LockRenderProfilesLoader] Config file {} does not exist; returning empty map.", path.toAbsolutePath());
-                }
+                LOG.info("[Locksmith][LockRenderProfilesLoader] No {} found; using empty server profile map.",
+                        path.toAbsolutePath());
                 return out;
             }
 
             try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
                 JsonElement rootEl = JsonParser.parseReader(reader);
                 if (!rootEl.isJsonObject()) {
-                    LOG.error("[Locksmith][LockRenderProfilesLoader] Root JSON is not an object in {}.", path.toAbsolutePath());
+                    LOG.error("[Locksmith][LockRenderProfilesLoader] Root JSON is not an object in {}.",
+                            path.toAbsolutePath());
                     return out;
                 }
 
                 JsonObject rootObj = rootEl.getAsJsonObject();
                 JsonElement profilesEl = rootObj.get("profiles");
                 if (profilesEl == null || !profilesEl.isJsonArray()) {
-                    LOG.warn("[Locksmith][LockRenderProfilesLoader] No 'profiles' array in {}. Using empty map.", path.toAbsolutePath());
+                    LOG.warn("[Locksmith][LockRenderProfilesLoader] No 'profiles' array in {}. Using empty map.",
+                            path.toAbsolutePath());
                     return out;
                 }
 
@@ -70,39 +80,15 @@ public final class LockRenderProfilesLoader {
                             ? profObj.getAsJsonObject("render")
                             : new JsonObject();
 
-                    // Type-specific defaults
-                    double defOffsetX;
-                    double defOffsetY;
-                    double defOffsetZ;
-                    float defRotX;
-                    float defRotY;
-                    float defRotZ;
-                    float defScale;
-                    double defHingeLeft;
-                    double defHingeRight;
-
-                    if (targetType == LockTargetType.CHEST) {
-                        defOffsetX = LockRenderTuning.CHEST_OFFSET_X;
-                        defOffsetY = LockRenderTuning.CHEST_OFFSET_Y;
-                        defOffsetZ = LockRenderTuning.CHEST_OFFSET_Z;
-                        defRotX = LockRenderTuning.CHEST_ROT_X;
-                        defRotY = LockRenderTuning.CHEST_ROT_Y;
-                        defRotZ = LockRenderTuning.CHEST_ROT_Z;
-                        defScale = LockRenderTuning.CHEST_SCALE;
-                        // hinge nudges are not used for chests
-                        defHingeLeft = 0.0;
-                        defHingeRight = 0.0;
-                    } else {
-                        defOffsetX = LockRenderTuning.OFFSET_X;
-                        defOffsetY = LockRenderTuning.OFFSET_Y;
-                        defOffsetZ = LockRenderTuning.OFFSET_Z;
-                        defRotX = LockRenderTuning.ROT_X;
-                        defRotY = LockRenderTuning.ROT_Y;
-                        defRotZ = LockRenderTuning.ROT_Z;
-                        defScale = LockRenderTuning.SCALE;
-                        defHingeLeft = LockRenderTuning.NUDGE_HINGE_LEFT;
-                        defHingeRight = LockRenderTuning.NUDGE_HINGE_RIGHT;
-                    }
+                    // Defaults match the initial config file Locksmith writes out.
+                    final boolean isChest = (targetType == LockTargetType.CHEST);
+                    final double defOffsetX = isChest ? -0.025D : -0.05D;
+                    final double defOffsetY = isChest ? 0.05D : 0.5D;
+                    final double defOffsetZ = isChest ? 0.45D : -0.5D;
+                    final float defRotX = 0.0F;
+                    final float defRotY = isChest ? 180.0F : 0.0F;
+                    final float defRotZ = 0.0F;
+                    final float defScale = 0.75F;
 
                     double offsetX = getDoubleOrDefault(renderObj, "offsetX", defOffsetX);
                     double offsetY = getDoubleOrDefault(renderObj, "offsetY", defOffsetY);
@@ -114,12 +100,27 @@ public final class LockRenderProfilesLoader {
 
                     float scale = (float) getDoubleOrDefault(renderObj, "scale", defScale);
 
-                    double hingeLeft = getDoubleOrDefault(renderObj, "hingeNudgeLeft", defHingeLeft);
-                    double hingeRight = getDoubleOrDefault(renderObj, "hingeNudgeRight", defHingeRight);
+                    double hingeLeft;
+                    double hingeRight;
+
+                    if (isChest) {
+                        // CHEST: read doubleNudgeX and shove it into hingeLeft/Right for S2C transport.
+                        double defDoubleNudge = 0.25D;
+                        double chestDoubleNudge = getDoubleOrDefault(renderObj, "doubleNudgeX", defDoubleNudge);
+                        hingeLeft = chestDoubleNudge;
+                        hingeRight = chestDoubleNudge;
+                    } else {
+                        // DOOR: keep existing semantics.
+                        double defHingeLeft = 0.18D;
+                        double defHingeRight = 0.325D;
+                        hingeLeft = getDoubleOrDefault(renderObj, "hingeNudgeLeft", defHingeLeft);
+                        hingeRight = getDoubleOrDefault(renderObj, "hingeNudgeRight", defHingeRight);
+                    }
 
                     JsonElement blocksEl = profObj.get("blocks");
                     if (blocksEl == null || !blocksEl.isJsonArray()) {
-                        LOG.warn("[Locksmith][LockRenderProfilesLoader] Profile '{}' has no 'blocks' array; skipping.", idStr);
+                        LOG.warn("[Locksmith][LockRenderProfilesLoader] Profile '{}' has no 'blocks' array; skipping.",
+                                idStr);
                         continue;
                     }
 
@@ -136,7 +137,8 @@ public final class LockRenderProfilesLoader {
                         ResourceLocation key = ResourceLocation.tryParse(blkStr);
                         if (key == null) {
                             invalidBlocks++;
-                            LOG.warn("[Locksmith][LockRenderProfilesLoader] Invalid block id '{}' in profile '{}'; skipping.", blkStr, idStr);
+                            LOG.warn("[Locksmith][LockRenderProfilesLoader] Invalid block id '{}' in profile '{}'; skipping.",
+                                    blkStr, idStr);
                             continue;
                         }
 
@@ -159,15 +161,18 @@ public final class LockRenderProfilesLoader {
                     }
                 }
 
-                LOG.info("[Locksmith][LockRenderProfilesLoader] Loaded {} profile(s), {} block entry/entries ({} invalid block ids) from {}.",
-                        totalProfiles, totalEntries, invalidBlocks, path.toAbsolutePath());
+                LOG.info(
+                        "[Locksmith][LockRenderProfilesLoader] Loaded {} JSON profile(s), {} block entry/entries ({} invalid block ids) from {}.",
+                        totalProfiles, totalEntries, invalidBlocks, path.toAbsolutePath()
+                );
             }
         } catch (IOException e) {
             LOG.error("[Locksmith][LockRenderProfilesLoader] IO error reading {} (non-fatal).", path.toAbsolutePath(), e);
         } catch (JsonParseException e) {
             LOG.error("[Locksmith][LockRenderProfilesLoader] JSON parse error in {} (non-fatal).", path.toAbsolutePath(), e);
         } catch (Throwable t) {
-            LOG.error("[Locksmith][LockRenderProfilesLoader] Unexpected error reading {} (non-fatal).", path.toAbsolutePath(), t);
+            LOG.error("[Locksmith][LockRenderProfilesLoader] Unexpected error reading {} (non-fatal).",
+                    path.toAbsolutePath(), t);
         }
 
         return out;

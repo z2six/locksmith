@@ -62,10 +62,10 @@ public final class DoorLockRenderer {
     private static final float CHEST_SINGLE_SCALE = 0.75F;
 
     /**
-     * Extra local-X nudge for double chests (relative to the chest front, after facing rotation).
-     * Positive values move the lock to the right when looking at the chest front.
+     * Fallback nudge for double chests when no server profile exists.
+     * (Server profiles override this via profile.hingeNudgeLeft for CHEST entries.)
      */
-    private static final double CHEST_DOUBLE_SHIFT_X = 0.18D;
+    private static final double CHEST_DOUBLE_SHIFT_FALLBACK_X = 0.18D;
 
     private DoorLockRenderer() {
     }
@@ -507,7 +507,7 @@ public final class DoorLockRenderer {
                 return false;
             }
 
-            // Chest profile (if present) for offsets/rotations/scale.
+            // Chest profile (if present) for offsets/rotations/scale + double nudge from server.
             LockRenderProfile profile = null;
             try {
                 if (blockId != null) {
@@ -532,14 +532,20 @@ public final class DoorLockRenderer {
 
             float scale = useProfile ? profile.scale : CHEST_SINGLE_SCALE;
 
+            // NEW: use server-authoritative double nudge (stored in hingeNudgeLeft for CHEST profiles).
+            double doubleNudgeX = useProfile
+                    ? profile.hingeNudgeLeft
+                    : CHEST_DOUBLE_SHIFT_FALLBACK_X;
+
             // Double chest nudge: move toward the center seam when looking at the chest front.
             double finalX = baseOffsetX;
-            if (type != ChestType.SINGLE) {
-                double shift = CHEST_DOUBLE_SHIFT_X;
+            if (type != ChestType.SINGLE && doubleNudgeX != 0.0D) {
                 if (type == ChestType.LEFT) {
-                    finalX += shift;
+                    // LEFT half: move lock toward the center seam (right side of the left chest).
+                    finalX += doubleNudgeX;
                 } else if (type == ChestType.RIGHT) {
-                    finalX -= shift;
+                    // RIGHT half: move lock toward the center seam (left side of the right chest).
+                    finalX -= doubleNudgeX;
                 }
             }
 
@@ -565,7 +571,7 @@ public final class DoorLockRenderer {
 
             if (doDebugThisTick) {
                 LOG.debug(
-                        "[Locksmith][DoorLockRenderer] CHEST pos={} blockId={} prof={} facing={} type={} open={} frame={} alpha={} yRot={} baseX={} finalX={} finalY={} finalZ={} profilesCached={}",
+                        "[Locksmith][DoorLockRenderer] CHEST pos={} blockId={} prof={} facing={} type={} open={} frame={} alpha={} yRot={} baseX={} nudgeX={} finalX={} finalY={} finalZ={} profilesCached={}",
                         pos,
                         (blockId == null ? "<null>" : blockId),
                         (useProfile ? "YES" : "NO"),
@@ -576,6 +582,7 @@ public final class DoorLockRenderer {
                         alpha,
                         yRot,
                         baseOffsetX,
+                        doubleNudgeX,
                         finalX,
                         finalY,
                         finalZ,
@@ -641,7 +648,7 @@ public final class DoorLockRenderer {
     }
 
     /**
-     * Map frame index → alpha. We have 5 frames (0..4) over ~20 ticks (4 ticks per frame),
+     * Map frame index → alpha. We have 5 frames (0..4),
      * and we want the fade to happen in lockstep with the animation:
      *   frame 0 → alpha 1.0
      *   frame 1 → alpha 0.8
@@ -660,7 +667,7 @@ public final class DoorLockRenderer {
     }
 
     // ------------------------------------------------------------------------
-    // Alpha wrappers (1.21.1 VertexConsumer API: setColor/setUv/setUv1/setUv2/setNormal/addVertex)
+    // Alpha wrappers (1.21.1 VertexConsumer API)
     // ------------------------------------------------------------------------
 
     private static final class AlphaMultiBufferSource implements MultiBufferSource {

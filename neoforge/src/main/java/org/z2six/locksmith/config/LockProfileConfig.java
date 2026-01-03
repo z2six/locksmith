@@ -1,4 +1,4 @@
-// neoforge/src/main/java/org/z2six/locksmith/config/LockProfileConfig.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/config/LockProfileConfig.java
 package org.z2six.locksmith.config;
 
 import com.google.gson.Gson;
@@ -57,9 +57,9 @@ public final class LockProfileConfig {
             JsonObject root = new JsonObject();
             JsonArray profiles = new JsonArray();
 
-            // -------------------------
+            // -----------------------------------------------------------------
             // Default profile: vanilla doors
-            // -------------------------
+            // -----------------------------------------------------------------
             JsonObject doorProfile = new JsonObject();
             doorProfile.addProperty("id", "vanilla_doors");
             doorProfile.addProperty("type", "door");
@@ -92,9 +92,9 @@ public final class LockProfileConfig {
 
             profiles.add(doorProfile);
 
-            // -------------------------
+            // -----------------------------------------------------------------
             // Default profile: vanilla chests
-            // -------------------------
+            // -----------------------------------------------------------------
             JsonObject chestProfile = new JsonObject();
             chestProfile.addProperty("id", "vanilla_chests");
             chestProfile.addProperty("type", "chest");
@@ -112,6 +112,8 @@ public final class LockProfileConfig {
             chestRender.addProperty("rotY", 180.0);
             chestRender.addProperty("rotZ", 0.0);
             chestRender.addProperty("scale", 0.75);
+            // New: server-authoritative nudge for double chests (local X, to the right when facing front)
+            chestRender.addProperty("doubleNudgeX", 0.25);
             chestProfile.add("render", chestRender);
 
             profiles.add(chestProfile);
