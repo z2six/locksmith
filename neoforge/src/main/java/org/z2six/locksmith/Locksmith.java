@@ -1,4 +1,4 @@
-// MainFile: neoforge/src/main/java/org/z2six/locksmith/Locksmith.java
+// neoforge/src/main/java/org/z2six/locksmith/Locksmith.java
 package org.z2six.locksmith;
 
 import net.neoforged.bus.api.EventPriority;
@@ -8,16 +8,15 @@ import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
 import org.z2six.locksmith.config.LockProfileConfig;
+import org.z2six.locksmith.config.LocksmithClientConfig;
 import org.z2six.locksmith.event.LocksmithDoorEvents;
 import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
 import org.z2six.locksmith.registry.ModItems;
-import org.z2six.locksmith.config.LockProfileConfig;
-import org.z2six.locksmith.config.LocksmithClientConfig;
+import org.z2six.locksmith.registry.ModRecipeSerializers;
 
 @Mod(Constants.MOD_ID)
 public class Locksmith {
-
     private static final Logger LOG = Constants.LOG;
 
     public Locksmith(IEventBus eventBus) {
@@ -50,6 +49,14 @@ public class Locksmith {
             LOG.error("[Locksmith] FAILED to register item DeferredRegister (this is bad).", t);
         }
 
+        // NEW: recipe serializers (required for iron_key_mint recipe)
+        try {
+            ModRecipeSerializers.RECIPE_SERIALIZERS.register(eventBus);
+            LOG.info("[Locksmith] Registered DeferredRegister for recipe serializers.");
+        } catch (Throwable t) {
+            LOG.error("[Locksmith] FAILED to register recipe serializer DeferredRegister (this is bad).", t);
+        }
+
         try {
             eventBus.addListener(LocksmithPayloads::onRegisterPayloadHandlers);
             LOG.info("[Locksmith] Registered payload handler registration listener.");
@@ -68,7 +75,6 @@ public class Locksmith {
             NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithDoorEvents::onRightClickBlock);
 
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onPlayerLoggedIn);
-
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onBlockBreak);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onExplosionDetonate);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onServerTick);
