@@ -1,4 +1,4 @@
-// MainFile: neoforge/src/main/java/org/z2six/locksmith/item/IronKeyItem.java
+// neoforge/src/main/java/org/z2six/locksmith/item/IronKeyItem.java
 package org.z2six.locksmith.item;
 
 import net.minecraft.ChatFormatting;
@@ -23,6 +23,9 @@ import java.util.List;
  *    - Unregistered -> "Unregistered"
  *    - Registered -> "Registered by: <name>"
  * - RMB while held in MAIN hand opens registration GUI (client-side only) if unregistered.
+ * - Stack size rules:
+ *    - Unregistered -> stackable up to 64
+ *    - Registered -> non-stackable (max 1)
  *
  * Dedicated server safe: no direct client class references.
  */
@@ -33,6 +36,9 @@ public class IronKeyItem extends Item {
     public static final String DATA_KEY_HASH = "LocksmithKeyHash";
     public static final String DATA_REGISTERED_BY = "LocksmithRegisteredBy";
     public static final int MAX_PASSPHRASE_LEN = 64;
+
+    private static final int MAX_STACK_UNREGISTERED = 64;
+    private static final int MAX_STACK_REGISTERED = 1;
 
     private static final String CLIENT_SCREEN_CLASS = "org.z2six.locksmith.client.screen.IronKeyRegisterScreen";
 
@@ -52,10 +58,48 @@ public class IronKeyItem extends Item {
         return ItemStackDataUtil.getString(stack, DATA_REGISTERED_BY);
     }
 
+    /**
+     * Dynamic stack size:
+     * - Unregistered keys: 64
+     * - Registered keys: 1
+     *
+     * Notes:
+     * - This depends on your item registration not hard-forcing stacksTo(1).
+     * - Even without this override, registered keys with differing data won't stack,
+     *   but this makes them NEVER stack (even if identical data).
+     */
+    @Override
+    public int getMaxStackSize(ItemStack stack) {
+        try {
+            if (stack == null || stack.isEmpty()) {
+                return super.getMaxStackSize(stack);
+            }
+
+            boolean reg = isRegistered(stack);
+            int desired = reg ? MAX_STACK_REGISTERED : MAX_STACK_UNREGISTERED;
+
+            // Respect any lower cap that might be imposed by the base item properties.
+            int base = super.getMaxStackSize(stack);
+            int result = Math.min(base, desired);
+
+            if (reg && result > 1) {
+                // This can happen if base is larger and desired is 1, but min() should prevent it.
+                // Still keep a defensive log in case future MC changes occur.
+                LOG.debug("[Locksmith][IronKeyItem] getMaxStackSize defensive: registered key but result={} (base={}, desired={}). Forcing to 1.",
+                        result, base, desired);
+                result = 1;
+            }
+
+            return result;
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][IronKeyItem] getMaxStackSize failed (non-fatal). Falling back to super.", t);
+            return super.getMaxStackSize(stack);
+        }
+    }
+
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext ctx, List<Component> tooltip, TooltipFlag flag) {
         super.appendHoverText(stack, ctx, tooltip, flag);
-
         try {
             if (!isRegistered(stack)) {
                 tooltip.add(Component.translatable("tooltip.locksmith.unregistered").withStyle(ChatFormatting.GRAY));

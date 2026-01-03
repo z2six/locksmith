@@ -1,4 +1,4 @@
-// MainFile: neoforge/src/main/java/org/z2six/locksmith/registry/ModItems.java
+// neoforge/src/main/java/org/z2six/locksmith/registry/ModItems.java
 package org.z2six.locksmith.registry;
 
 import net.minecraft.core.registries.Registries;
@@ -20,7 +20,9 @@ public final class ModItems {
 
     public static final DeferredHolder<Item, Item> KEY_IRON = ITEMS.register("iron_key", () ->
             new IronKeyItem(new Item.Properties()
-                    .stacksTo(1)
+                    // Base item must allow stacking up to 64, otherwise dynamic stack sizing
+                    // in IronKeyItem#getMaxStackSize(ItemStack) can never increase it.
+                    .stacksTo(64)
                     .rarity(Rarity.UNCOMMON)
             )
     );
@@ -56,6 +58,19 @@ public final class ModItems {
             LOG.debug("[Locksmith][ModItems] Registered items OK: iron_key={}, lock_iron={}",
                     safeItemName(new ItemStack(key)),
                     safeItemName(new ItemStack(lock)));
+
+            // Extra diagnostics (safe):
+            try {
+                // NeoForge 1.21.x stack sizing is stack-aware, so pass an ItemStack.
+                int baseKeyMax = key.getMaxStackSize(new ItemStack(key));
+                int baseLockMax = lock.getMaxStackSize(new ItemStack(lock));
+                LOG.debug("[Locksmith][ModItems] Base max stack sizes: iron_key(base)={} lock_iron(base)={}",
+                        baseKeyMax, baseLockMax);
+            } catch (Throwable t) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][ModItems] Base max stack size diagnostics failed (non-fatal).", t);
+                }
+            }
 
         } catch (Throwable t) {
             // Keep it non-fatal and non-spammy.
