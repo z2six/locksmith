@@ -16,29 +16,12 @@ Additional blocks — including modded ones — can be configured server-side.
 </p>
 
 <p align="center">
-Craft iron keys and register them using a secret passphrase.
-</p>
-
-<p align="center">
-The passphrase is never stored in plain text.
-It is converted into a SHA hash and written to the key’s NBT data.
-</p>
-
-<p align="center">
-Registered keys can be duplicated safely using the key minting recipe.
-</p>
-
-<p align="center">
-Locked doors can optionally auto-close after a configurable delay.
-</p>
-
-<p align="center">
-Locksmith does not make blocks indestructible.
-Locked blocks can still be broken or destroyed by explosions.
-</p>
-
-<p align="center">
-For land ownership or grief protection, a claims mod such as OpenPAC is recommended.
+  🔑 Craft iron keys and register them with a secret passphrase<br><br>
+  🔒 Lock doors, chests, and other blocks using those keys<br><br>
+  📋 Duplicate keys safely (master & copied key system)<br><br>
+  🚪 Optional auto-closing for locked doors<br><br>
+  🧩 Supports modded blocks via simple configuration<br><br>
+  🌐 Fully server-authoritative & multiplayer-safe
 </p>
 
 <p align="center">
@@ -46,27 +29,12 @@ For land ownership or grief protection, a claims mod such as OpenPAC is recommen
 </p>
 
 <p align="center">
-Craft an iron key.
-</p>
-
-<p align="center">
-Right-click while holding the key to register it.
-</p>
-
-<p align="center">
-Enter a secret passphrase when prompted.
-</p>
-
-<p align="center">
-Right-click a door or chest with the registered key to lock it.
-</p>
-
-<p align="center">
-Duplicate keys using the minting recipe if multiple players need access.
-</p>
-
-<p align="center">
-Players without a matching key will be unable to open the locked block.
+    1. Craft an iron key (1x iron ingot, 2x iron nugget below)<br><br>
+    2. Right-click while holding the key to register it.<br><br>
+    3. Enter a secret passphrase when prompted.<br><br>
+    4. Right-click a door or chest with the registered key to lock it.<br><br>
+    5. Duplicate keys using the minting recipe if multiple players need access.
+    Players without a matching key will be unable to open the locked block.
 </p>
 
 <p align="center">
@@ -75,32 +43,29 @@ Players without a matching key will be unable to open the locked block.
 
 <p align="center">
 Server administrators can define exactly which blocks are lockable.
-</p>
-
-<p align="center">
 This includes vanilla blocks as well as blocks added by other mods.
 </p>
 
-Example: adding a modded chest
-```json
-{
-  "minecraft:chest": {
-    "type": "chest"
-  },
-  "modid:custom_chest": {
-    "type": "chest"
-  }
-}
-```
+<p align="center">Example: adding a custom door:</p>
 
-Example: adding a custom door
 ```json
 {
-  "minecraft:oak_door": {
-    "type": "door"
-  },
-  "modid:steel_door": {
-    "type": "door"
+  "id": "my_mod_doors",
+  "type": "door",
+  "blocks": [
+    "modid:steel_door",
+    "modid:reinforced_door"
+  ],
+  "render": {
+    "offsetX": -0.05,
+    "offsetY": 0.5,
+    "offsetZ": -0.5,
+    "rotX": 0.0,
+    "rotY": 0.0,
+    "rotZ": 0.0,
+    "scale": 0.75,
+    "hingeNudgeLeft": 0.18,
+    "hingeNudgeRight": 0.325
   }
 }
 ```
@@ -110,19 +75,22 @@ These profiles control locking behavior only.
 They do not affect block hardness or explosion resistance.
 </p>
 
-<p align="center">
-Licensing and distribution
-</p>
+<h2 align="center">
+💡 Tips
+</h2>
 
 <p align="center">
-Locksmith is released under the MIT License.
+This mod does not make locked blocks invulnerable. 
+I'd strongly recommend combining this mod with something 
+like OpenPAC (this mod was built exactly for that scenario).
 </p>
 
-<p align="center">
-All code and assets are MIT licensed.
-</p>
+<h2 align="center">
+📝 Licensing and distribution
+</h2>
 
 <p align="center">
+Locksmith is released under the MIT License. All code and assets are MIT licensed. 
 You are free to use, modify, and redistribute the mod in any form,
 including modpacks and commercial projects, in accordance with the license.
 </p>
