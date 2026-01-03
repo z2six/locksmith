@@ -39,6 +39,7 @@ import org.z2six.locksmith.network.SyncDoorLocksPayload;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
 import org.z2six.locksmith.world.DoorLockSavedData;
+import org.z2six.locksmith.client.ClientHudMessages;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -142,6 +143,7 @@ public final class LocksmithDoorEvents {
 
                         try {
                             PacketDistributor.sendToServer(new LockDoorPayload(doorLong));
+                            ClientHudMessages.showDoorLockSuccess();
                             LOG.debug("[Locksmith][Client] Lock click ate interaction and sent LockDoorPayload pos={}", doorPos);
                         } catch (Throwable t) {
                             LOG.error("[Locksmith][Client] Failed to send LockDoorPayload (non-fatal).", t);
@@ -159,6 +161,7 @@ public final class LocksmithDoorEvents {
                             event.setCanceled(true);
                             event.setCancellationResult(InteractionResult.FAIL);
                             safeDenyVanillaUse(event);
+                            ClientHudMessages.showDoorLockedNoKey();
                             LOG.debug("[Locksmith][Client] Denied locked door use at {} (no key).", doorPos);
                         }
                     }
@@ -271,7 +274,6 @@ public final class LocksmithDoorEvents {
                     }
                 }
             }
-
         } catch (Throwable t) {
             LOG.error("[Locksmith][LocksmithDoorEvents] onRightClickBlock failed (non-fatal).", t);
         }

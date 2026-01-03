@@ -113,7 +113,7 @@ public final class LockProfileConfig {
             chestRender.addProperty("rotZ", 0.0);
             chestRender.addProperty("scale", 0.75);
             // New: server-authoritative nudge for double chests (local X, to the right when facing front)
-            chestRender.addProperty("doubleNudgeX", 0.25);
+            chestRender.addProperty("doubleNudgeX", -0.5);
             chestProfile.add("render", chestRender);
 
             profiles.add(chestProfile);

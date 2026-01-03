@@ -22,10 +22,19 @@ import java.util.List;
  * [qol]
  * autoCloseLockedDoors = true
  * autoCloseTicks = 20
+ * hudMessagesEnabled = true
+ * hudMessageTicks = 40
+ * hudScale = 1.0
+ * hudOffsetY = -35
  * ---------------------------------
  *
  * - autoCloseLockedDoors : enable/disable auto-close for locked doors
  * - autoCloseTicks       : delay in ticks (20 = 1 second)
+ *
+ * - hudMessagesEnabled   : enable/disable HUD feedback text
+ * - hudMessageTicks      : how long to show HUD messages (GUI frames, ~20 = 1s)
+ * - hudScale             : HUD text scale (1.0 = normal)
+ * - hudOffsetY           : vertical offset from screen center (negative = up)
  *
  * We parse a tiny subset of TOML:
  * - '#' / '//' / ';' comments
@@ -38,13 +47,25 @@ public final class LocksmithClientConfig {
 
     private static final String FILE_NAME = "locksmith-client.toml";
 
+    // Auto-close
     private static final boolean DEFAULT_AUTO_CLOSE_ENABLED = true;
     private static final int DEFAULT_AUTO_CLOSE_TICKS = 20;
     private static final int MIN_TICKS = 1;
     private static final int MAX_TICKS = 20 * 60 * 60; // 1 real-time hour at 20 TPS
 
+    // HUD messages
+    private static final boolean DEFAULT_HUD_MESSAGES_ENABLED = true;
+    private static final int DEFAULT_HUD_MESSAGE_TICKS = 40; // ~2 seconds at 20 FPS
+    private static final float DEFAULT_HUD_SCALE = 1.0F;
+    private static final int DEFAULT_HUD_OFFSET_Y = -35;     // a bit above crosshair
+
     private static volatile boolean autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
     private static volatile int autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+
+    private static volatile boolean hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
+    private static volatile int hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
+    private static volatile float hudScale = DEFAULT_HUD_SCALE;
+    private static volatile int hudOffsetY = DEFAULT_HUD_OFFSET_Y;
 
     private LocksmithClientConfig() {
     }
@@ -59,12 +80,39 @@ public final class LocksmithClientConfig {
         }
     }
 
+    // ---------- Auto-close getters ----------
+
     public static boolean isAutoCloseEnabled() {
         return autoCloseEnabled;
     }
 
     public static int getAutoCloseTicks() {
         return autoCloseTicks;
+    }
+
+    // ---------- HUD message getters ----------
+
+    public static boolean isHudMessagesEnabled() {
+        return hudMessagesEnabled;
+    }
+
+    /**
+     * How long to show HUD messages in GUI frames (RenderGuiEvent calls).
+     */
+    public static int getHudMessageTicks() {
+        return hudMessageTicks;
+    }
+
+    public static float getHudScale() {
+        return hudScale;
+    }
+
+    /**
+     * Vertical offset from screen center in GUI pixels.
+     * Negative = above center, positive = below.
+     */
+    public static int getHudOffsetY() {
+        return hudOffsetY;
     }
 
     /**
@@ -76,13 +124,25 @@ public final class LocksmithClientConfig {
             Path path = getConfigPath();
             if (!Files.exists(path)) {
                 createDefaultFile(path);
+
                 autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
                 autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+
+                hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
+                hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
+                hudScale = DEFAULT_HUD_SCALE;
+                hudOffsetY = DEFAULT_HUD_OFFSET_Y;
+
                 LOG.info(
-                        "[Locksmith][ClientConfig] Created default config at {} (enabled={}, ticks={})",
+                        "[Locksmith][ClientConfig] Created default config at {} "
+                                + "(autoCloseEnabled={}, autoCloseTicks={}, hudMessagesEnabled={}, hudMessageTicks={}, hudScale={}, hudOffsetY={})",
                         path.toAbsolutePath(),
                         autoCloseEnabled,
-                        autoCloseTicks
+                        autoCloseTicks,
+                        hudMessagesEnabled,
+                        hudMessageTicks,
+                        hudScale,
+                        hudOffsetY
                 );
                 return;
             }
@@ -90,6 +150,11 @@ public final class LocksmithClientConfig {
             // Load existing file
             boolean enabled = DEFAULT_AUTO_CLOSE_ENABLED;
             int ticks = DEFAULT_AUTO_CLOSE_TICKS;
+
+            boolean hudEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
+            int hudTicks = DEFAULT_HUD_MESSAGE_TICKS;
+            float hudScaleLocal = DEFAULT_HUD_SCALE;
+            int hudOffsetYLocal = DEFAULT_HUD_OFFSET_Y;
 
             List<String> lines;
             try {
@@ -99,6 +164,11 @@ public final class LocksmithClientConfig {
                         path.toAbsolutePath(), io);
                 autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
                 autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+
+                hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
+                hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
+                hudScale = DEFAULT_HUD_SCALE;
+                hudOffsetY = DEFAULT_HUD_OFFSET_Y;
                 return;
             }
 
@@ -125,6 +195,7 @@ public final class LocksmithClientConfig {
 
                 String normKey = key.toLowerCase();
 
+                // Auto-close keys
                 if (normKey.equals("autocloselockeddoors") || normKey.equals("auto_close_locked_doors")) {
                     Boolean parsed = parseBoolean(value);
                     if (parsed != null) {
@@ -140,22 +211,68 @@ public final class LocksmithClientConfig {
                         LOG.warn("[Locksmith][ClientConfig] Invalid int for {}: '{}'", key, value);
                     }
                 }
+                // HUD keys
+                else if (normKey.equals("hudmessagesenabled") || normKey.equals("hud_messages_enabled")) {
+                    Boolean parsed = parseBoolean(value);
+                    if (parsed != null) {
+                        hudEnabled = parsed;
+                    } else {
+                        LOG.warn("[Locksmith][ClientConfig] Invalid boolean for {}: '{}'", key, value);
+                    }
+                } else if (normKey.equals("hudmessageticks") || normKey.equals("hud_message_ticks")) {
+                    Integer parsed = parseIntClamped(value, 1, 20 * 60 * 10); // up to ~10 minutes of HUD, arbitrary
+                    if (parsed != null) {
+                        hudTicks = parsed;
+                    } else {
+                        LOG.warn("[Locksmith][ClientConfig] Invalid int for {}: '{}'", key, value);
+                    }
+                } else if (normKey.equals("hudscale") || normKey.equals("hud_scale")) {
+                    Float parsed = parseFloatClamped(value, 0.25F, 4.0F);
+                    if (parsed != null) {
+                        hudScaleLocal = parsed;
+                    } else {
+                        LOG.warn("[Locksmith][ClientConfig] Invalid float for {}: '{}'", key, value);
+                    }
+                } else if (normKey.equals("hudoffsety") || normKey.equals("hud_offset_y")) {
+                    Integer parsed = parseIntClamped(value, -2000, 2000);
+                    if (parsed != null) {
+                        hudOffsetYLocal = parsed;
+                    } else {
+                        LOG.warn("[Locksmith][ClientConfig] Invalid int for {}: '{}'", key, value);
+                    }
+                }
             }
 
             autoCloseEnabled = enabled;
             autoCloseTicks = ticks;
 
+            hudMessagesEnabled = hudEnabled;
+            hudMessageTicks = hudTicks;
+            hudScale = hudScaleLocal;
+            hudOffsetY = hudOffsetYLocal;
+
             LOG.info(
-                    "[Locksmith][ClientConfig] Loaded config from {} (enabled={}, ticks={})",
+                    "[Locksmith][ClientConfig] Loaded config from {} "
+                            + "(autoCloseEnabled={}, autoCloseTicks={}, hudMessagesEnabled={}, hudMessageTicks={}, hudScale={}, hudOffsetY={})",
                     path.toAbsolutePath(),
                     autoCloseEnabled,
-                    autoCloseTicks
+                    autoCloseTicks,
+                    hudMessagesEnabled,
+                    hudMessageTicks,
+                    hudScale,
+                    hudOffsetY
             );
 
         } catch (Throwable t) {
             LOG.error("[Locksmith][ClientConfig] loadOrCreate failed (non-fatal, using defaults).", t);
+
             autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
             autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+
+            hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
+            hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
+            hudScale = DEFAULT_HUD_SCALE;
+            hudOffsetY = DEFAULT_HUD_OFFSET_Y;
         }
     }
 
@@ -177,9 +294,20 @@ public final class LocksmithClientConfig {
             sb.append("# autoCloseLockedDoors = true/false\n");
             sb.append("# autoCloseTicks       = ticks before auto-close (20 = 1 second)\n");
             sb.append("\n");
+            sb.append("# HUD feedback when locking / denied due to missing key.\n");
+            sb.append("# hudMessagesEnabled   = true/false\n");
+            sb.append("# hudMessageTicks      = how long to show HUD message (GUI frames, ~20 = 1 second)\n");
+            sb.append("# hudScale             = text scale (1.0 = normal)\n");
+            sb.append("# hudOffsetY           = vertical offset from screen center (negative = up)\n");
+            sb.append("\n");
             sb.append("[qol]\n");
             sb.append("autoCloseLockedDoors = ").append(DEFAULT_AUTO_CLOSE_ENABLED).append("\n");
             sb.append("autoCloseTicks = ").append(DEFAULT_AUTO_CLOSE_TICKS).append("\n");
+            sb.append("\n");
+            sb.append("hudMessagesEnabled = ").append(DEFAULT_HUD_MESSAGES_ENABLED).append("\n");
+            sb.append("hudMessageTicks = ").append(DEFAULT_HUD_MESSAGE_TICKS).append("\n");
+            sb.append("hudScale = ").append(DEFAULT_HUD_SCALE).append("\n");
+            sb.append("hudOffsetY = ").append(DEFAULT_HUD_OFFSET_Y).append("\n");
 
             Files.writeString(path, sb.toString(), StandardCharsets.UTF_8);
         } catch (Throwable t) {
@@ -215,6 +343,17 @@ public final class LocksmithClientConfig {
             if (i < min) i = min;
             if (i > max) i = max;
             return i;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static Float parseFloatClamped(String value, float min, float max) {
+        try {
+            float f = Float.parseFloat(value);
+            if (f < min) f = min;
+            if (f > max) f = max;
+            return f;
         } catch (NumberFormatException ex) {
             return null;
         }

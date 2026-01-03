@@ -27,5 +27,13 @@ public final class ClientInit {
         } catch (Throwable t) {
             LOG.error("[Locksmith][ClientInit] Failed to register ClientLifecycleEvents (non-fatal).", t);
         }
+
+        try {
+            NeoForge.EVENT_BUS.addListener(ClientHudMessages::onRenderGui);
+            NeoForge.EVENT_BUS.addListener(ClientHudMessages::onClientTick);
+            LOG.info("[Locksmith][ClientInit] Registered ClientHudMessages HUD overlay + tick.");
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][ClientInit] Failed to register ClientHudMessages (non-fatal).", t);
+        }
     }
 }

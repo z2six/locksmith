@@ -38,6 +38,7 @@ import org.z2six.locksmith.render.profile.LockRenderProfile;
 import org.z2six.locksmith.render.profile.LockTargetType;
 import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.world.ChestLockSavedData;
+import org.z2six.locksmith.client.ClientHudMessages;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -100,14 +101,16 @@ public final class LocksmithChestEvents {
             } catch (Throwable ignored) {
             }
 
-            boolean isChestType = isChestTypeConfiguredClient(blockId);
-            if (!isChestType) {
-                // For server side we *also* gate (authoritative), but on client we must avoid eating random blocks.
-                if (!level.isClientSide) {
-                    if (!isChestTypeConfiguredServer(blockId)) {
-                        return;
-                    }
-                } else {
+            boolean isChestTypeClient = isChestTypeConfiguredClient(blockId);
+            boolean isChestTypeServer = isChestTypeConfiguredServer(blockId);
+
+            // Client must never eat random blocks; server is authoritative for locks.
+            if (level.isClientSide) {
+                if (!isChestTypeClient) {
+                    return;
+                }
+            } else {
+                if (!isChestTypeServer) {
                     return;
                 }
             }
@@ -120,7 +123,9 @@ public final class LocksmithChestEvents {
                 ClientChestOpenBlocker.cleanupExpired(level.getGameTime(), 64);
 
                 // Case A: holding registered key, chest not locked => eat and send lock request
-                if (!ClientChestLockState.isLocked(chestKeyLong) && event.getHand() == InteractionHand.MAIN_HAND) {
+                if (!ClientChestLockState.isLocked(chestKeyLong)
+                        && event.getHand() == InteractionHand.MAIN_HAND) {
+
                     ItemStack held = player.getItemInHand(InteractionHand.MAIN_HAND);
                     if (held != null && !held.isEmpty()
                             && held.getItem() instanceof IronKeyItem
@@ -138,6 +143,7 @@ public final class LocksmithChestEvents {
 
                         try {
                             PacketDistributor.sendToServer(new LockChestPayload(chestKeyLong));
+                            org.z2six.locksmith.client.ClientHudMessages.showChestLockSuccess();
                             LOG.debug("[Locksmith][Client] Chest lock click ate interaction and sent LockChestPayload pos={}", chestKeyPos);
                         } catch (Throwable t) {
                             LOG.error("[Locksmith][Client] Failed to send LockChestPayload (non-fatal).", t);
@@ -155,7 +161,8 @@ public final class LocksmithChestEvents {
                             event.setCanceled(true);
                             event.setCancellationResult(InteractionResult.FAIL);
                             safeDenyVanillaUse(event);
-                            LOG.debug("[Locksmith][Client] Denied locked chest use at {} (no key).", chestKeyPos);
+                            org.z2six.locksmith.client.ClientHudMessages.showChestLockedNoKey();
+                            LOG.debug("[Locksmith][Client] Blocked chest open at {} (no matching key).", chestKeyPos);
                         }
                     }
                 }
@@ -169,14 +176,24 @@ public final class LocksmithChestEvents {
 
             ChestLockSavedData data = ChestLockSavedData.get(sLevel);
 
+            // If the chest block went away entirely, clean up
+            BlockState keyState = sLevel.getBlockState(chestKeyPos);
+            if (keyState == null || keyState.isAir()) {
+                boolean removed = data.removeLockLong(chestKeyLong);
+                if (removed) {
+                    broadcastRemoveToLevelPlayers(sLevel, chestKeyLong);
+                    LOG.info("[Locksmith] Removed chest lock at {} because block disappeared.", chestKeyPos);
+                }
+                return;
+            }
+
             boolean isLocked = data.isLockedLong(chestKeyLong);
 
-            // Lock/register when holding registered key and chest not locked
+            // Unlocked -> locking with held key
             if (!isLocked && event.getHand() == InteractionHand.MAIN_HAND) {
                 ItemStack held = sp.getItemInHand(InteractionHand.MAIN_HAND);
                 if (held != null && !held.isEmpty()
                         && held.getItem() instanceof IronKeyItem
-                        && held.is(ModItems.KEY_IRON.get())
                         && IronKeyItem.isRegistered(held)) {
 
                     event.setCanceled(true);
@@ -191,14 +208,15 @@ public final class LocksmithChestEvents {
                         }
                         LOG.info("[Locksmith] Chest locked at {} (sync sent, interaction eaten).", chestKeyPos);
                     } else {
-                        LOG.debug("[Locksmith] Chest lock attempt at {} ate interaction but did not add lock (already locked/invalid).", chestKeyPos);
+                        LOG.debug("[Locksmith] Chest lock attempt at {} ate interaction but did not add lock (already locked or invalid key).",
+                                chestKeyPos);
                     }
 
                     return;
                 }
             }
 
-            // Deny open if locked and player has no matching key
+            // Locked -> permission check
             if (data.isLockedLong(chestKeyLong)) {
                 String requiredHash = data.getHashLong(chestKeyLong);
                 if (requiredHash == null || requiredHash.isBlank()) {
