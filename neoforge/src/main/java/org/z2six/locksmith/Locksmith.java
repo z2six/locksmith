@@ -12,6 +12,8 @@ import org.z2six.locksmith.event.LocksmithDoorEvents;
 import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
 import org.z2six.locksmith.registry.ModItems;
+import org.z2six.locksmith.config.LockProfileConfig;
+import org.z2six.locksmith.config.LocksmithClientConfig;
 
 @Mod(Constants.MOD_ID)
 public class Locksmith {
@@ -28,6 +30,17 @@ public class Locksmith {
             LOG.info("[Locksmith] Ensured lock profile config exists at startup.");
         } catch (Throwable t) {
             LOG.error("[Locksmith] FAILED to ensure lock profile config exists at startup (non-fatal).", t);
+        }
+
+        try {
+            LocksmithClientConfig.loadOrCreate();
+            LOG.info(
+                    "[Locksmith] Loaded client QoL config: autoCloseEnabled={} autoCloseTicks={}",
+                    LocksmithClientConfig.isAutoCloseEnabled(),
+                    LocksmithClientConfig.getAutoCloseTicks()
+            );
+        } catch (Throwable t) {
+            LOG.error("[Locksmith] FAILED to load client QoL config (non-fatal, using defaults).", t);
         }
 
         try {
