@@ -1,32 +1,128 @@
-# MultiLoader Template
+<p align="center">
+  <img src="https://media.forgecdn.net/attachments/description/null/description_19d46064-372e-4feb-853e-354836ae2339.png" alt="Locksmith title banner">
+</p>
 
-This project provides a Gradle project template that can compile Minecraft mods for multiple modloaders using a common project for the sources. This project does not require any third party libraries or dependencies. If you have any questions or want to discuss the project, please join our [Discord](https://discord.myceliummod.network).
+<p align="center">
+Allows the locking of blocks using physical keys instead of permissions.
+</p>
 
-## Getting Started
+<p align="center">
+By default, vanilla doors, chests, and trapped chests are supported.
+Additional blocks — including modded ones — can be configured server-side.
+</p>
 
-### IntelliJ IDEA
-This guide will show how to import the MultiLoader Template into IntelliJ IDEA. The setup process is roughly equivalent to setting up the modloaders independently and should be very familiar to anyone who has worked with their MDKs.
+<p align="center">
+  <img src="https://media.forgecdn.net/attachments/description/null/description_c1ee597e-11c0-4339-9928-c51c137a907e.png" alt="Features banner">
+</p>
 
-1. Clone or download this repository to your computer.
-2. Configure the project by setting the properties in the `gradle.properties` file. You will also need to change the `rootProject.name`  property in `settings.gradle`, this should match the folder name of your project, or else IDEA may complain.
-3. Open the template's root folder as a new project in IDEA. This is the folder that contains this README.md file and the gradlew executable.
-4. If your default JVM/JDK is not Java 21 you will encounter an error when opening the project. This error is fixed by going to `File > Settings > Build, Execution, Deployment > Build Tools > Gradle > Gradle JVM` and changing the value to a valid Java 21 JVM. You will also need to set the Project SDK to Java 21. This can be done by going to `File > Project Structure > Project SDK`. Once both have been set open the Gradle tab in IDEA and click the refresh button to reload the project.
-5. Open your Run/Debug Configurations. Under the `Application` category there should now be options to run Fabric and NeoForge projects. Select one of the client options and try to run it.
-6. Assuming you were able to run the game in step 5 your workspace should now be set up.
+<p align="center">
+Craft iron keys and register them using a secret passphrase.
+</p>
 
-### Eclipse
-While it is possible to use this template in Eclipse it is not recommended. During the development of this template multiple critical bugs and quirks related to Eclipse were found at nearly every level of the required build tools. While we continue to work with these tools to report and resolve issues support for projects like these are not there yet. For now Eclipse is considered unsupported by this project. The development cycle for build tools is notoriously slow so there are no ETAs available.
+<p align="center">
+The passphrase is never stored in plain text.
+It is converted into a SHA hash and written to the key’s NBT data.
+</p>
 
-## Development Guide
-When using this template the majority of your mod should be developed in the `common` project. The `common` project is compiled against the vanilla game and is used to hold code that is shared between the different loader-specific versions of your mod. The `common` project has no knowledge or access to ModLoader specific code, apis, or concepts. Code that requires something from a specific loader must be done through the project that is specific to that loader, such as the `fabric` or `neoforge` projects.
+<p align="center">
+Registered keys can be duplicated safely using the key minting recipe.
+</p>
 
-Loader specific projects such as the `fabric` and `neoforge` project are used to load the `common` project into the game. These projects also define code that is specific to that loader. Loader specific projects can access all the code in the `common` project. It is important to remember that the `common` project can not access code from loader specific projects.
+<p align="center">
+Locked doors can optionally auto-close after a configurable delay.
+</p>
 
-## Removing Platforms and Loaders
-While this template has support for many modloaders, new loaders may appear in the future, and existing loaders may become less relevant.
+<p align="center">
+Locksmith does not make blocks indestructible.
+Locked blocks can still be broken or destroyed by explosions.
+</p>
 
-Removing loader specific projects is as easy as deleting the folder, and removing the `include("projectname")` line from the `settings.gradle` file.
-For example if you wanted to remove support for `forge` you would follow the following steps:
+<p align="center">
+For land ownership or grief protection, a claims mod such as OpenPAC is recommended.
+</p>
 
-1. Delete the subproject folder. For example, delete `MultiLoader-Template/forge`.
-2. Remove the project from `settings.gradle`. For example, remove `include("forge")`. 
+<p align="center">
+  <img src="https://media.forgecdn.net/attachments/description/null/description_1aeb1c2d-e797-456a-962f-c9844d94b2c2.png" alt="How-to banner">
+</p>
+
+<p align="center">
+Craft an iron key.
+</p>
+
+<p align="center">
+Right-click while holding the key to register it.
+</p>
+
+<p align="center">
+Enter a secret passphrase when prompted.
+</p>
+
+<p align="center">
+Right-click a door or chest with the registered key to lock it.
+</p>
+
+<p align="center">
+Duplicate keys using the minting recipe if multiple players need access.
+</p>
+
+<p align="center">
+Players without a matching key will be unable to open the locked block.
+</p>
+
+<p align="center">
+  <img src="https://media.forgecdn.net/attachments/description/null/description_0d6e24e9-0307-4a76-ae20-278ca808e1c8.png" alt="Customize banner">
+</p>
+
+<p align="center">
+Server administrators can define exactly which blocks are lockable.
+</p>
+
+<p align="center">
+This includes vanilla blocks as well as blocks added by other mods.
+</p>
+
+Example: adding a modded chest
+```json
+{
+  "minecraft:chest": {
+    "type": "chest"
+  },
+  "modid:custom_chest": {
+    "type": "chest"
+  }
+}
+```
+
+Example: adding a custom door
+```json
+{
+  "minecraft:oak_door": {
+    "type": "door"
+  },
+  "modid:steel_door": {
+    "type": "door"
+  }
+}
+```
+
+<p align="center">
+These profiles control locking behavior only.
+They do not affect block hardness or explosion resistance.
+</p>
+
+<p align="center">
+Licensing and distribution
+</p>
+
+<p align="center">
+Locksmith is released under the MIT License.
+</p>
+
+<p align="center">
+All code and assets are MIT licensed.
+</p>
+
+<p align="center">
+You are free to use, modify, and redistribute the mod in any form,
+including modpacks and commercial projects, in accordance with the license.
+</p>
