@@ -8,7 +8,6 @@
     "MixinMultiPlayerGameMode"
   ],
   "client": [
-    "MixinTitleScreen"
   ],
   "server": [],
   "injectors": {

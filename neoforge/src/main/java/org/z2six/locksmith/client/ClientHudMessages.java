@@ -1,168 +1,152 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/client/ClientHudMessages.java
 package org.z2six.locksmith.client;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.minecraft.network.chat.Component;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.config.LocksmithClientConfig;
 
 /**
- * Very small HUD overlay for Locksmith feedback:
- * - "Door locked" / "Chest locked"
- * - "Door locked: no key" / "Chest locked: no key"
+ * Locksmith HUD feedback.
  *
- * Driven entirely client-side, controlled by LocksmithClientConfig.
+ * IMPORTANT:
+ * - We intentionally use ONLY the vanilla overlay message (above-hotbar) because it:
+ *   - persists longer
+ *   - fades smoothly
+ *   - is consistent with Minecraft UX
+ *
+ * - We DO NOT render our own centered HUD message anymore, because it caused duplicate messages.
+ *
+ * - We honor the client config toggle hudMessagesEnabled.
+ *
+ * Partial coloring:
+ * - Achieved by using translatable strings with %s placeholders and passing styled Components as arguments.
  */
 public final class ClientHudMessages {
 
     private static final Logger LOG = Constants.LOG;
 
-    private static Component currentMessage = null;
-    private static int remainingTicks = 0;
-    private static int currentColor = 0xFFFFFFFF;
-
     private ClientHudMessages() {
     }
 
     // ------------------------------------------------------------------------
-    // Public helpers for doors/chests
+    // Public helpers
     // ------------------------------------------------------------------------
 
     public static void showDoorLockedNoKey() {
-        tryShow(Component.translatable("message.locksmith.door_locked_no_key"), 0xFFFF5555);
+        showLockedNoKey(makeTargetDoor(), makeLockedWordDenied());
     }
 
     public static void showChestLockedNoKey() {
-        tryShow(Component.translatable("message.locksmith.chest_locked_no_key"), 0xFFFF5555);
+        showLockedNoKey(makeTargetChest(), makeLockedWordDenied());
     }
 
     public static void showDoorLockSuccess() {
-        tryShow(Component.translatable("message.locksmith.door_locked_success"), 0xFF55FF55);
+        showLockSuccess(makeTargetDoor(), makeLockedWordSuccess());
     }
 
     public static void showChestLockSuccess() {
-        tryShow(Component.translatable("message.locksmith.chest_locked_success"), 0xFF55FF55);
+        showLockSuccess(makeTargetChest(), makeLockedWordSuccess());
     }
 
     // ------------------------------------------------------------------------
-    // Internal state helpers
+    // Message builders (partial coloring)
     // ------------------------------------------------------------------------
 
-    private static void tryShow(Component msg, int argb) {
+    private static Component makeTargetDoor() {
+        // A single colored word inside the sentence.
+        return Component.translatable("message.locksmith.target.door").withStyle(ChatFormatting.AQUA);
+    }
+
+    private static Component makeTargetChest() {
+        return Component.translatable("message.locksmith.target.chest").withStyle(ChatFormatting.AQUA);
+    }
+
+    private static Component makeLockedWordDenied() {
+        return Component.translatable("message.locksmith.word.locked").withStyle(ChatFormatting.RED);
+    }
+
+    private static Component makeLockedWordSuccess() {
+        return Component.translatable("message.locksmith.word.locked").withStyle(ChatFormatting.GREEN);
+    }
+
+    // ------------------------------------------------------------------------
+    // Emission (vanilla overlay only)
+    // ------------------------------------------------------------------------
+
+    private static void showLockedNoKey(Component target, Component lockedWord) {
         try {
-            if (!LocksmithClientConfig.isHudMessagesEnabled()) {
+            if (!isEnabled()) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][ClientHudMessages] hudMessagesEnabled=false; skipping locked_no_key.");
+                }
                 return;
             }
+
+            // Requires translation key: message.locksmith.locked_no_key_fmt
+            Component msg = Component.translatable("message.locksmith.locked_no_key_fmt", target, lockedWord);
+            pushVanillaOverlay(msg);
+
+            if (LOG.isInfoEnabled()) {
+                LOG.info("[Locksmith][ClientHudMessages] overlay=locked_no_key msg='{}'", safeString(msg));
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][ClientHudMessages] showLockedNoKey failed (non-fatal).", t);
+        }
+    }
+
+    private static void showLockSuccess(Component target, Component lockedWord) {
+        try {
+            if (!isEnabled()) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][ClientHudMessages] hudMessagesEnabled=false; skipping locked_success.");
+                }
+                return;
+            }
+
+            // Requires translation key: message.locksmith.lock_success_fmt
+            Component msg = Component.translatable("message.locksmith.lock_success_fmt", target, lockedWord);
+            pushVanillaOverlay(msg);
+
+            if (LOG.isInfoEnabled()) {
+                LOG.info("[Locksmith][ClientHudMessages] overlay=lock_success msg='{}'", safeString(msg));
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][ClientHudMessages] showLockSuccess failed (non-fatal).", t);
+        }
+    }
+
+    private static boolean isEnabled() {
+        try {
+            return LocksmithClientConfig.isHudMessagesEnabled();
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][ClientHudMessages] Failed reading hudMessagesEnabled; defaulting to enabled (non-fatal).", t);
+            return true;
+        }
+    }
+
+    private static void pushVanillaOverlay(Component msg) {
+        try {
             if (msg == null) return;
 
-            int ticks = LocksmithClientConfig.getHudMessageTicks();
-            if (ticks <= 0) {
-                ticks = 1;
-            }
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null) return;
+            if (mc.gui == null) return;
 
-            currentMessage = msg;
-            currentColor = argb;
-            remainingTicks = ticks;
-
-            if (LOG.isDebugEnabled()) {
-                LOG.debug(
-                        "[Locksmith][ClientHudMessages] Showing HUD message '{}' for {} client tick(s).",
-                        msg.getString(), ticks
-                );
-            }
+            // Above-hotbar overlay. Not chat.
+            mc.gui.setOverlayMessage(msg, false);
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientHudMessages] tryShow failed (non-fatal).", t);
+            LOG.warn("[Locksmith][ClientHudMessages] pushVanillaOverlay failed (non-fatal).", t);
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Tick hook: lifetime management (client ticks, 20 per second)
-    // ------------------------------------------------------------------------
-
-    public static void onClientTick(ClientTickEvent.Post event) {
+    private static String safeString(Component c) {
         try {
-            if (remainingTicks <= 0) {
-                return;
-            }
-
-            Minecraft mc = Minecraft.getInstance();
-            if (mc == null) {
-                return;
-            }
-
-            // Optional: don't tick while paused
-            if (mc.isPaused()) {
-                return;
-            }
-
-            remainingTicks--;
-            if (remainingTicks <= 0) {
-                if (LOG.isDebugEnabled() && currentMessage != null) {
-                    LOG.debug("[Locksmith][ClientHudMessages] HUD message '{}' expired.", currentMessage.getString());
-                }
-                currentMessage = null;
-            }
+            return c != null ? c.getString() : "null";
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientHudMessages] onClientTick failed (non-fatal).", t);
-        }
-    }
-
-    // ------------------------------------------------------------------------
-    // Render hook (registered from ClientInit)
-    // ------------------------------------------------------------------------
-
-    public static void onRenderGui(RenderGuiEvent.Post event) {
-        try {
-            if (currentMessage == null || remainingTicks <= 0) {
-                return;
-            }
-
-            Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.level == null) {
-                return;
-            }
-
-            GuiGraphics gfx = event.getGuiGraphics();
-            if (gfx == null) return;
-
-            var window = mc.getWindow();
-            if (window == null) {
-                return;
-            }
-
-            int screenWidth = window.getGuiScaledWidth();
-            int screenHeight = window.getGuiScaledHeight();
-            Font font = mc.font;
-
-            float scale = LocksmithClientConfig.getHudScale();
-            if (scale <= 0.0F) {
-                scale = 1.0F;
-            }
-            int offsetY = LocksmithClientConfig.getHudOffsetY();
-
-            int centerX = screenWidth / 2;
-            int baseY = screenHeight / 2 + offsetY;
-
-            int textWidth = font.width(currentMessage);
-
-            gfx.pose().pushPose();
-            // Draw in front of almost everything else
-            gfx.pose().translate(0.0F, 0.0F, 500.0F);
-            gfx.pose().scale(scale, scale, 1.0F);
-
-            float scaledCenterX = centerX / scale;
-            float scaledY = baseY / scale;
-            float drawX = scaledCenterX - (textWidth / 2.0F);
-
-            gfx.drawString(font, currentMessage, (int) drawX, (int) scaledY, currentColor, false);
-            gfx.pose().popPose();
-        } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientHudMessages] onRenderGui failed (non-fatal).", t);
+            return "<?>"; // never crash logging
         }
     }
 }

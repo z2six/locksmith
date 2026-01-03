@@ -1,12 +1,9 @@
-// MainFile: LocksmithDoorEvents.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/event/LocksmithDoorEvents.java
 package org.z2six.locksmith.event;
 
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -18,13 +15,12 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.neoforged.neoforge.common.util.TriState;
-import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ExplosionEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
@@ -33,13 +29,12 @@ import org.z2six.locksmith.config.LocksmithClientConfig;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.DoorLockManager;
 import org.z2six.locksmith.network.AddDoorLockPayload;
-import org.z2six.locksmith.network.LockDoorPayload;
+import org.z2six.locksmith.network.HudMessagePayload;
 import org.z2six.locksmith.network.RemoveDoorLockPayload;
 import org.z2six.locksmith.network.SyncDoorLocksPayload;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
 import org.z2six.locksmith.world.DoorLockSavedData;
-import org.z2six.locksmith.client.ClientHudMessages;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,18 +49,10 @@ public final class LocksmithDoorEvents {
 
     private static final int CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK = 6;
 
-    // Existing “keep closed for a few ticks” mechanic
     private static final int FORCE_CLOSE_AFTER_LOCK_TICKS = 5;
     private static final int FORCE_CLOSE_MAX_PER_TICK = 256;
 
-    // New: max auto-close operations per tick per level
     private static final int AUTO_CLOSE_MAX_PER_TICK = 256;
-
-    /**
-     * Auto-close scheduler:
-     * - key: dimension -> (doorPosLong -> ticksRemaining)
-     * - when ticksRemaining hits 0, we close once and remove.
-     */
     private static final Map<ResourceKey<Level>, Long2IntOpenHashMap> AUTO_CLOSE = new HashMap<>();
 
     private LocksmithDoorEvents() {
@@ -122,7 +109,6 @@ public final class LocksmithDoorEvents {
 
                 ClientDoorOpenBlocker.cleanupExpired(level.getGameTime(), 64);
 
-                // 1) Lock placement (client-side prediction)
                 if (!ClientDoorLockState.isLocked(doorLong)
                         && event.getHand() == InteractionHand.MAIN_HAND) {
 
@@ -141,9 +127,9 @@ public final class LocksmithDoorEvents {
                         event.setCancellationResult(InteractionResult.SUCCESS);
                         safeDenyVanillaUse(event);
 
+                        // NOTE: We do NOT show "success" here anymore; server will tell us via HudMessagePayload.
                         try {
-                            PacketDistributor.sendToServer(new LockDoorPayload(doorLong));
-                            ClientHudMessages.showDoorLockSuccess();
+                            PacketDistributor.sendToServer(new org.z2six.locksmith.network.LockDoorPayload(doorLong));
                             LOG.debug("[Locksmith][Client] Lock click ate interaction and sent LockDoorPayload pos={}", doorPos);
                         } catch (Throwable t) {
                             LOG.error("[Locksmith][Client] Failed to send LockDoorPayload (non-fatal).", t);
@@ -152,7 +138,6 @@ public final class LocksmithDoorEvents {
                     }
                 }
 
-                // 2) Locked door: client denies if no key
                 if (ClientDoorLockState.isLocked(doorLong)) {
                     String requiredHash = ClientDoorLockState.getRequiredHash(doorLong);
                     if (requiredHash != null && !requiredHash.isBlank()) {
@@ -161,7 +146,10 @@ public final class LocksmithDoorEvents {
                             event.setCanceled(true);
                             event.setCancellationResult(InteractionResult.FAIL);
                             safeDenyVanillaUse(event);
-                            ClientHudMessages.showDoorLockedNoKey();
+
+                            // Optional: client can show instantly, but server will also send for dedicated consistency.
+                            org.z2six.locksmith.client.ClientHudMessages.showDoorLockedNoKey();
+
                             LOG.debug("[Locksmith][Client] Denied locked door use at {} (no key).", doorPos);
                         }
                     }
@@ -180,7 +168,6 @@ public final class LocksmithDoorEvents {
 
             DoorLockSavedData data = DoorLockSavedData.get(sLevel);
 
-            // If the door got removed, clean lock
             if (!(sLevel.getBlockState(doorPos).getBlock() instanceof DoorBlock)) {
                 boolean removed = data.removeLock(doorPos);
                 if (removed) {
@@ -191,7 +178,7 @@ public final class LocksmithDoorEvents {
 
             boolean isLocked = data.isLocked(doorPos);
 
-            // 1) Unlocked door: handle lock placement with iron key
+            // Unlocked door: lock placement via interact event (can still happen in some MP paths)
             if (!isLocked && event.getHand() == InteractionHand.MAIN_HAND) {
                 ItemStack held = sp.getItemInHand(InteractionHand.MAIN_HAND);
                 if (held != null && !held.isEmpty()
@@ -204,7 +191,6 @@ public final class LocksmithDoorEvents {
 
                     boolean added = DoorLockManager.tryLockDoorWithHeldKey(sLevel, sp, doorPos, held);
 
-                    // After locking, keep door forcibly closed for a few ticks to defeat prediction races
                     DoorLockManager.forceCloseDoor(sLevel, doorPos);
                     DoorLockManager.requestForceClose(sLevel, doorPos, FORCE_CLOSE_AFTER_LOCK_TICKS);
 
@@ -213,6 +199,16 @@ public final class LocksmithDoorEvents {
                         for (ServerPlayer other : sLevel.players()) {
                             PacketDistributor.sendToPlayer(other, new AddDoorLockPayload(doorPos.asLong(), hash));
                         }
+
+                        // ✅ Dedicated-safe HUD message: S2C
+                        try {
+                            PacketDistributor.sendToPlayer(sp, new HudMessagePayload(HudMessagePayload.DOOR_LOCK_SUCCESS));
+                            LOG.info("[Locksmith][DoorMessages] Sent DOOR_LOCK_SUCCESS HUD payload to {} at {}.",
+                                    sp.getName().getString(), doorPos);
+                        } catch (Throwable t) {
+                            LOG.warn("[Locksmith][DoorMessages] Failed sending DOOR_LOCK_SUCCESS HUD payload (non-fatal).", t);
+                        }
+
                         LOG.info("[Locksmith] Door locked at {} (sync sent, interaction eaten, forced-close queued).", doorPos);
                     } else {
                         LOG.debug("[Locksmith] Lock attempt at {} ate interaction but did not add lock (already locked or invalid key).", doorPos);
@@ -222,7 +218,7 @@ public final class LocksmithDoorEvents {
                 }
             }
 
-            // 2) Locked door: permission check + optional auto-close
+            // Locked door: permission check + optional auto-close
             if (data.isLocked(doorPos)) {
                 String requiredHash = data.getHash(doorPos);
                 if (requiredHash == null || requiredHash.isBlank()) {
@@ -232,17 +228,15 @@ public final class LocksmithDoorEvents {
 
                 boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(sp, requiredHash);
                 if (!hasKey) {
-                    // No key -> deny open
                     event.setCanceled(true);
                     event.setCancellationResult(InteractionResult.FAIL);
                     safeDenyVanillaUse(event);
 
-                    sendDeniedMessageThrottled(sp, sLevel.getGameTime());
+                    sendDeniedMessageThrottled(sp, sLevel.getGameTime(), doorPos);
 
                     LOG.debug("[Locksmith] Blocked door open at {} for player {} (no matching key).",
                             doorPos, sp.getName().getString());
                 } else {
-                    // Has key -> allow vanilla toggle, but possibly schedule auto-close
                     try {
                         if (LocksmithClientConfig.isAutoCloseEnabled()) {
                             int ticks = LocksmithClientConfig.getAutoCloseTicks();
@@ -256,15 +250,10 @@ public final class LocksmithDoorEvents {
                                     LOG.warn("[Locksmith] Failed to read door OPEN property at {} (non-fatal).", doorPos, t);
                                 }
 
-                                // Only schedule auto-close when the door is currently CLOSED
-                                // and this click is going to OPEN it.
                                 if (!isCurrentlyOpen) {
                                     scheduleAutoCloseLockedDoor(sLevel, doorPos, ticks);
                                     if (LOG.isDebugEnabled()) {
-                                        LOG.debug(
-                                                "[Locksmith] Scheduled auto-close for locked door at {} in {} tick(s).",
-                                                doorPos, ticks
-                                        );
+                                        LOG.debug("[Locksmith] Scheduled auto-close for locked door at {} in {} tick(s).", doorPos, ticks);
                                     }
                                 }
                             }
@@ -343,13 +332,11 @@ public final class LocksmithDoorEvents {
             MinecraftServer server = event.getServer();
             if (server == null) return;
 
-            // 1) Existing force-close ticks (keep door closed for a short window)
             for (ServerLevel level : server.getAllLevels()) {
                 DoorLockManager.tickForceClose(level, FORCE_CLOSE_MAX_PER_TICK);
                 processAutoClose(level, AUTO_CLOSE_MAX_PER_TICK);
             }
 
-            // 2) Periodic cleanup / resync of invalid doors
             ServerLevel overworld = server.overworld();
             if (overworld == null) return;
 
@@ -401,8 +388,7 @@ public final class LocksmithDoorEvents {
             map.put(key, next);
 
             if (LOG.isDebugEnabled()) {
-                LOG.debug("[Locksmith] scheduleAutoClose dim={} pos={} ticks={}",
-                        dim.location(), doorPos, ticks);
+                LOG.debug("[Locksmith] scheduleAutoClose dim={} pos={} ticks={}", dim.location(), doorPos, ticks);
             }
         } catch (Throwable t) {
             LOG.warn("[Locksmith] scheduleAutoCloseLockedDoor failed (non-fatal).", t);
@@ -422,7 +408,6 @@ public final class LocksmithDoorEvents {
 
             for (long posLong : keys) {
                 if (maxPerTick > 0 && processed >= maxPerTick) break;
-
                 int remaining = map.get(posLong);
                 if (remaining <= 0) {
                     map.remove(posLong);
@@ -433,7 +418,6 @@ public final class LocksmithDoorEvents {
                 if (remaining <= 0) {
                     BlockPos pos = BlockPos.of(posLong);
                     DoorLockManager.forceCloseDoor(level, pos);
-                    // After auto-close, keep closed briefly to defeat client prediction races.
                     DoorLockManager.requestForceClose(level, pos, FORCE_CLOSE_AFTER_LOCK_TICKS);
                     map.remove(posLong);
                     processed++;
@@ -474,7 +458,7 @@ public final class LocksmithDoorEvents {
         }
     }
 
-    private static void sendDeniedMessageThrottled(ServerPlayer player, long gameTime) {
+    private static void sendDeniedMessageThrottled(ServerPlayer player, long gameTime, BlockPos doorPos) {
         try {
             if (player == null) return;
 
@@ -484,11 +468,15 @@ public final class LocksmithDoorEvents {
             if (gameTime - last < 20) return;
             DENY_THROTTLE.put(id, gameTime);
 
-            player.displayClientMessage(
-                    Component.translatable("message.locksmith.door_locked_no_key")
-                            .withStyle(ChatFormatting.RED),
-                    true
-            );
+            // ✅ Dedicated-safe HUD message: S2C
+            try {
+                PacketDistributor.sendToPlayer(player, new HudMessagePayload(HudMessagePayload.DOOR_LOCKED_NO_KEY));
+                LOG.info("[Locksmith][DoorMessages] Sent DOOR_LOCKED_NO_KEY HUD payload to {} at {}.",
+                        player.getName().getString(), doorPos);
+            } catch (Throwable t) {
+                LOG.warn("[Locksmith][DoorMessages] Failed sending DOOR_LOCKED_NO_KEY HUD payload (non-fatal).", t);
+            }
+
         } catch (Throwable t) {
             LOG.warn("[Locksmith] sendDeniedMessageThrottled failed (non-fatal).", t);
         }

@@ -1,4 +1,4 @@
-// neoforge/src/main/java/org/z2six/locksmith/network/LockChestPayload.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/network/LockChestPayload.java
 package org.z2six.locksmith.network;
 
 import net.minecraft.core.BlockPos;
@@ -112,11 +112,27 @@ public record LockChestPayload(long chestPosLong) implements CustomPacketPayload
             }
 
             boolean added = ChestLockManager.tryLockChestWithHeldKey(level, player, chestKeyPos, held);
-            if (!added) return;
+            if (!added) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][LockChestPayload] tryLockChestWithHeldKey returned false at {} for {}.",
+                            chestKeyPos, player.getName().getString());
+                }
+                return;
+            }
 
             String hash = data.getHashLong(chestKeyLong);
             for (ServerPlayer other : level.players()) {
                 PacketDistributor.sendToPlayer(other, new AddChestLockPayload(chestKeyLong, hash));
+            }
+
+            // ✅ Dedicated-safe HUD message: S2C
+            try {
+                PacketDistributor.sendToPlayer(player, new HudMessagePayload(HudMessagePayload.CHEST_LOCK_SUCCESS));
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][LockChestPayload] Sent CHEST_LOCK_SUCCESS HUD payload to {}.", player.getName().getString());
+                }
+            } catch (Throwable t) {
+                LOG.warn("[Locksmith][LockChestPayload] Failed sending CHEST_LOCK_SUCCESS HUD payload (non-fatal).", t);
             }
 
             LOG.info("[Locksmith] Chest locked at {} via LockChestPayload by player={}.",

@@ -3,9 +3,12 @@
   "tooltip.locksmith.unregistered": "Unregistered",
   "tooltip.locksmith.registered_by": "Registered by: %s",
   "tooltip.locksmith.tools_and_utilities": "Tools & Utilities",
+
   "item.locksmith.lock_iron": "Iron Lock",
-  "message.locksmith.door_locked_no_key": "This door is locked. You don't have the right key.",
-  "message.locksmith.chest_locked_no_key": "This chest is locked. You don't have the right key.",
-  "message.locksmith.door_locked_success": "Door locked.",
-  "message.locksmith.chest_locked_success": "Chest locked."
+
+  "message.locksmith.target.door": "door",
+  "message.locksmith.target.chest": "chest",
+  "message.locksmith.word.locked": "locked",
+  "message.locksmith.locked_no_key_fmt": "This %s is %s. You don't have the right key.",
+  "message.locksmith.lock_success_fmt": "%s %s."
 }

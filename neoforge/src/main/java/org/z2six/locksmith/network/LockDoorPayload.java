@@ -101,12 +101,26 @@ public record LockDoorPayload(long doorPosLong) implements CustomPacketPayload {
             DoorLockManager.requestForceClose(level, doorPos, 5);
 
             if (!added) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][LockDoorPayload] tryLockDoorWithHeldKey returned false at {} for {}.",
+                            doorPos, player.getName().getString());
+                }
                 return;
             }
 
             String hash = data.getHash(doorPos);
             for (ServerPlayer other : level.players()) {
                 PacketDistributor.sendToPlayer(other, new AddDoorLockPayload(doorPos.asLong(), hash));
+            }
+
+            // ✅ Dedicated-safe HUD message: S2C
+            try {
+                PacketDistributor.sendToPlayer(player, new HudMessagePayload(HudMessagePayload.DOOR_LOCK_SUCCESS));
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][LockDoorPayload] Sent DOOR_LOCK_SUCCESS HUD payload to {}.", player.getName().getString());
+                }
+            } catch (Throwable t) {
+                LOG.warn("[Locksmith][LockDoorPayload] Failed sending DOOR_LOCK_SUCCESS HUD payload (non-fatal).", t);
             }
 
             LOG.info("[Locksmith] Door locked at {} via LockDoorPayload by player={} (forced-close queued).",

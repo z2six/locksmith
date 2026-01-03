@@ -1,6 +1,7 @@
-// neoforge/src/main/java/org/z2six/locksmith/mixin/MixinMultiPlayerGameMode.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/mixin/MixinMultiPlayerGameMode.java
 package org.z2six.locksmith.mixin;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -21,6 +22,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.z2six.locksmith.client.ClientHudMessages;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.ChestLockManager;
 import org.z2six.locksmith.lock.DoorLockManager;
@@ -34,8 +36,6 @@ import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
 import org.z2six.locksmith.render.profile.LockRenderProfile;
 import org.z2six.locksmith.render.profile.LockTargetType;
 
-import com.mojang.logging.LogUtils;
-
 @Mixin(MultiPlayerGameMode.class)
 public class MixinMultiPlayerGameMode {
 
@@ -44,6 +44,21 @@ public class MixinMultiPlayerGameMode {
 
     @Unique
     private static final int LOCKSMITH$CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK = 8;
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_DENY_DOOR_TICK = -999999L;
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_DENY_CHEST_TICK = -999999L;
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_SUCCESS_DOOR_TICK = -999999L;
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_SUCCESS_CHEST_TICK = -999999L;
+
+    @Unique
+    private static final int LOCKSMITH$MSG_THROTTLE_TICKS = 12;
 
     @Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true, require = 0)
     private void locksmith$useItemOn(LocalPlayer player,
@@ -73,33 +88,43 @@ public class MixinMultiPlayerGameMode {
 
             if (clickedState == null || clickedState.isAir()) return;
 
-            // DOOR path (existing behavior) -------------------------------------------------
+            // DOOR path --------------------------------------------------------------------
             if (clickedState.getBlock() instanceof DoorBlock) {
                 BlockPos doorPos = DoorLockManager.normalizeDoorPos(level, clickedPos, clickedState);
                 long doorLong = doorPos.asLong();
 
+                // Deny opening locked door without key (predicted-use path)
                 if (ClientDoorLockState.isLocked(doorLong)) {
                     String requiredHash = ClientDoorLockState.getRequiredHash(doorLong);
                     if (requiredHash != null && !requiredHash.isBlank()) {
                         boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
                         if (!hasKey) {
                             cir.setReturnValue(InteractionResult.FAIL);
-                            if (LOCKSMITH$LOG.isDebugEnabled()) {
-                                LOCKSMITH$LOG.debug("[Locksmith][MixinMultiPlayerGameMode] Denied locked door predicted-use (no key). doorPos={}", doorPos);
+
+                            // ✅ Actually show the message from the mixin path that is running.
+                            locksmith$maybeShowDoorDenied(level);
+
+                            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Denied locked door predicted-use (no key). doorPos={}", doorPos);
                             }
                             return;
                         }
                     }
+                    // Has key -> allow vanilla flow; do not eat interaction.
                     return;
                 }
 
+                // Lock registration click: iron key + registered + door currently unlocked
                 ItemStack held = player.getMainHandItem();
                 if (held == null || held.isEmpty()) return;
-
                 if (!(held.getItem() instanceof IronKeyItem)) return;
                 if (!IronKeyItem.isRegistered(held)) return;
 
-                ClientDoorOpenBlocker.blockOpenForTicks(doorLong, level.getGameTime(), LOCKSMITH$CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK);
+                ClientDoorOpenBlocker.blockOpenForTicks(
+                        doorLong,
+                        level.getGameTime(),
+                        LOCKSMITH$CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK
+                );
 
                 try {
                     DoorLockManager.forceCloseDoorClient(level, doorPos);
@@ -113,7 +138,11 @@ public class MixinMultiPlayerGameMode {
                     LOCKSMITH$LOG.error("[Locksmith][MixinMultiPlayerGameMode] Failed to send LockDoorPayload (non-fatal). doorPos={}", doorPos, t);
                 }
 
+                // Eat predicted interaction
                 cir.setReturnValue(InteractionResult.SUCCESS);
+
+                // ✅ Actually show success message from the mixin path.
+                locksmith$maybeShowDoorSuccess(level);
 
                 if (LOCKSMITH$LOG.isInfoEnabled()) {
                     String name = safeName(player);
@@ -122,7 +151,7 @@ public class MixinMultiPlayerGameMode {
                 return;
             }
 
-            // CHEST path (new) --------------------------------------------------------------
+            // CHEST path -------------------------------------------------------------------
             ResourceLocation blockId = null;
             try {
                 blockId = BuiltInRegistries.BLOCK.getKey(clickedState.getBlock());
@@ -138,28 +167,38 @@ public class MixinMultiPlayerGameMode {
             BlockPos chestKeyPos = ChestLockManager.normalizeChestPos(level, clickedPos, clickedState);
             long chestKeyLong = chestKeyPos.asLong();
 
+            // Deny opening locked chest without key (predicted-use path)
             if (ClientChestLockState.isLocked(chestKeyLong)) {
                 String requiredHash = ClientChestLockState.getRequiredHash(chestKeyLong);
                 if (requiredHash != null && !requiredHash.isBlank()) {
                     boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
                     if (!hasKey) {
                         cir.setReturnValue(InteractionResult.FAIL);
-                        if (LOCKSMITH$LOG.isDebugEnabled()) {
-                            LOCKSMITH$LOG.debug("[Locksmith][MixinMultiPlayerGameMode] Denied locked chest predicted-use (no key). chestKeyPos={}", chestKeyPos);
+
+                        // ✅ Actually show the message from the mixin path that is running.
+                        locksmith$maybeShowChestDenied(level);
+
+                        if (LOCKSMITH$LOG.isInfoEnabled()) {
+                            LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Denied locked chest predicted-use (no key). chestKeyPos={}", chestKeyPos);
                         }
                         return;
                     }
                 }
+                // Has key -> allow vanilla flow
                 return;
             }
 
+            // Lock registration click: iron key + registered + chest currently unlocked
             ItemStack held = player.getMainHandItem();
             if (held == null || held.isEmpty()) return;
-
             if (!(held.getItem() instanceof IronKeyItem)) return;
             if (!IronKeyItem.isRegistered(held)) return;
 
-            ClientChestOpenBlocker.blockOpenForTicks(chestKeyLong, level.getGameTime(), LOCKSMITH$CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK);
+            ClientChestOpenBlocker.blockOpenForTicks(
+                    chestKeyLong,
+                    level.getGameTime(),
+                    LOCKSMITH$CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK
+            );
 
             try {
                 PacketDistributor.sendToServer(new LockChestPayload(chestKeyLong));
@@ -169,6 +208,9 @@ public class MixinMultiPlayerGameMode {
 
             cir.setReturnValue(InteractionResult.SUCCESS);
 
+            // ✅ Actually show success message from the mixin path.
+            locksmith$maybeShowChestSuccess(level);
+
             if (LOCKSMITH$LOG.isInfoEnabled()) {
                 String name = safeName(player);
                 LOCKSMITH$LOG.info("[Locksmith] Ate predicted chest use to register lock (client). player={} chestKeyPos={}", name, chestKeyPos);
@@ -176,6 +218,82 @@ public class MixinMultiPlayerGameMode {
 
         } catch (Throwable t) {
             LOCKSMITH$LOG.error("[Locksmith][MixinMultiPlayerGameMode] useItemOn intercept failed (non-fatal).", t);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // HUD message helpers (throttled)
+    // ------------------------------------------------------------------------
+
+    @Unique
+    private static void locksmith$maybeShowDoorDenied(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+            if (now - LOCKSMITH$LAST_DENY_DOOR_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) return;
+            LOCKSMITH$LAST_DENY_DOOR_TICK = now;
+
+            ClientHudMessages.showDoorLockedNoKey();
+
+            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Triggered HUD deny message (door_locked_no_key). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOCKSMITH$LOG.warn("[Locksmith][MixinMultiPlayerGameMode] locksmith$maybeShowDoorDenied failed (non-fatal).", t);
+        }
+    }
+
+    @Unique
+    private static void locksmith$maybeShowChestDenied(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+            if (now - LOCKSMITH$LAST_DENY_CHEST_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) return;
+            LOCKSMITH$LAST_DENY_CHEST_TICK = now;
+
+            ClientHudMessages.showChestLockedNoKey();
+
+            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Triggered HUD deny message (chest_locked_no_key). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOCKSMITH$LOG.warn("[Locksmith][MixinMultiPlayerGameMode] locksmith$maybeShowChestDenied failed (non-fatal).", t);
+        }
+    }
+
+    @Unique
+    private static void locksmith$maybeShowDoorSuccess(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+            if (now - LOCKSMITH$LAST_SUCCESS_DOOR_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) return;
+            LOCKSMITH$LAST_SUCCESS_DOOR_TICK = now;
+
+            ClientHudMessages.showDoorLockSuccess();
+
+            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Triggered HUD success message (door_locked_success). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOCKSMITH$LOG.warn("[Locksmith][MixinMultiPlayerGameMode] locksmith$maybeShowDoorSuccess failed (non-fatal).", t);
+        }
+    }
+
+    @Unique
+    private static void locksmith$maybeShowChestSuccess(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+            if (now - LOCKSMITH$LAST_SUCCESS_CHEST_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) return;
+            LOCKSMITH$LAST_SUCCESS_CHEST_TICK = now;
+
+            ClientHudMessages.showChestLockSuccess();
+
+            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Triggered HUD success message (chest_locked_success). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOCKSMITH$LOG.warn("[Locksmith][MixinMultiPlayerGameMode] locksmith$maybeShowChestSuccess failed (non-fatal).", t);
         }
     }
 

@@ -1,4 +1,4 @@
-// neoforge/src/main/java/org/z2six/locksmith/Locksmith.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/Locksmith.java
 package org.z2six.locksmith;
 
 import net.neoforged.bus.api.EventPriority;
@@ -7,7 +7,7 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
-import org.z2six.locksmith.client.ClientInit;
+import org.z2six.locksmith.client.ClientModBusEvents;
 import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.config.LocksmithClientConfig;
 import org.z2six.locksmith.event.LocksmithChestEvents;
@@ -17,8 +17,6 @@ import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
 import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.registry.ModRecipeSerializers;
-
-import net.neoforged.fml.common.Mod;
 
 @Mod(Constants.MOD_ID)
 public class Locksmith {
@@ -36,6 +34,8 @@ public class Locksmith {
         }
 
         try {
+            // NOTE: this is a client config; calling it on dedicated server should be harmless if your implementation is safe.
+            // If it isn't, you should move this into client setup later. For now we keep your behavior unchanged.
             LocksmithClientConfig.loadOrCreate();
             LOG.info(
                     "[Locksmith] Loaded client QoL config: autoCloseEnabled={} autoCloseTicks={}",
@@ -96,14 +96,15 @@ public class Locksmith {
             LOG.error("[Locksmith] FAILED to register gameplay events (this is bad).", t);
         }
 
+        // ✅ Correct client init wiring:
+        // Register client-only listeners on the MOD event bus using FML client setup.
         try {
             if (FMLEnvironment.dist.isClient()) {
-                // keep existing reflection pattern
-                Class<?> clazz = Class.forName("org.z2six.locksmith.client.ClientInit");
-                clazz.getMethod("init").invoke(null);
+                ClientModBusEvents.register(eventBus);
+                LOG.info("[Locksmith] Registered client MOD-bus events (FMLClientSetupEvent).");
             }
         } catch (Throwable t) {
-            LOG.error("[Locksmith] Client init failed (non-fatal).", t);
+            LOG.error("[Locksmith] Client MOD-bus registration failed (non-fatal).", t);
         }
 
         ModItems.debugLogRegisteredItemsSafe();

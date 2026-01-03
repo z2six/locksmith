@@ -3,7 +3,6 @@ package org.z2six.locksmith.mixin;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
@@ -12,10 +11,12 @@ import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.z2six.locksmith.client.ClientHudMessages;
 import org.z2six.locksmith.lock.DoorLockManager;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
@@ -33,6 +34,15 @@ import org.z2six.locksmith.render.ClientDoorOpenBlocker;
 public class MixinDoorBlock {
 
     private static final Logger LOG = LogUtils.getLogger();
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_DENY_MSG_TICK = -999999L;
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_BLOCKER_MSG_TICK = -999999L;
+
+    @Unique
+    private static final int LOCKSMITH$MSG_THROTTLE_TICKS = 12;
 
     static {
         try {
@@ -77,6 +87,10 @@ public class MixinDoorBlock {
             boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
             if (!hasKey) {
                 cir.setReturnValue(InteractionResult.FAIL);
+
+                // ✅ This is the actual client-side deny path for empty-hand door use.
+                locksmith$maybeShowDenied(level);
+
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("[Locksmith][MixinDoorBlock][Client] Denied empty-hand use on locked door (no key). pos={}", doorPos);
                 }
@@ -120,8 +134,11 @@ public class MixinDoorBlock {
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("[Locksmith][MixinDoorBlock] CANCEL predicted open via setOpen at {} (blocker active).", doorLower);
                 }
+
+                // Optional UX: do NOT show "no key" here; blocker also triggers for the lock-click flow.
+                locksmith$maybeShowBlocker(level);
+
                 ci.cancel();
-                // Also visually ensure it's closed.
                 DoorLockManager.forceCloseDoorClient(level, doorLower);
                 return;
             }
@@ -135,6 +152,10 @@ public class MixinDoorBlock {
                         if (LOG.isDebugEnabled()) {
                             LOG.debug("[Locksmith][MixinDoorBlock] CANCEL predicted open via setOpen at {} (locked + no key).", doorLower);
                         }
+
+                        // ✅ This is the actual client-side deny path for predicted opens.
+                        locksmith$maybeShowDenied(level);
+
                         ci.cancel();
                         DoorLockManager.forceCloseDoorClient(level, doorLower);
                     }
@@ -143,6 +164,52 @@ public class MixinDoorBlock {
 
         } catch (Throwable t) {
             LOG.error("[Locksmith][MixinDoorBlock] setOpen inject failed (non-fatal).", t);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Message helpers (throttle to avoid spam/flicker)
+    // ------------------------------------------------------------------------
+
+    @Unique
+    private static void locksmith$maybeShowDenied(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+
+            if (now - LOCKSMITH$LAST_DENY_MSG_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) {
+                return;
+            }
+            LOCKSMITH$LAST_DENY_MSG_TICK = now;
+
+            ClientHudMessages.showDoorLockedNoKey();
+
+            if (LOG.isInfoEnabled()) {
+                LOG.info("[Locksmith][MixinDoorBlock] Triggered HUD deny message (door_locked_no_key). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][MixinDoorBlock] locksmith$maybeShowDenied failed (non-fatal).", t);
+        }
+    }
+
+    @Unique
+    private static void locksmith$maybeShowBlocker(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+
+            if (now - LOCKSMITH$LAST_BLOCKER_MSG_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) {
+                return;
+            }
+            LOCKSMITH$LAST_BLOCKER_MSG_TICK = now;
+
+            // This is intentionally not a "no key" message. We keep it silent to avoid confusing the user.
+            // If you later add a translation like "message.locksmith.door_busy", you can show it here.
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("[Locksmith][MixinDoorBlock] Blocker prevented predicted open (no HUD message). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][MixinDoorBlock] locksmith$maybeShowBlocker failed (non-fatal).", t);
         }
     }
 }

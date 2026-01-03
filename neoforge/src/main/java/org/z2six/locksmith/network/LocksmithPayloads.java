@@ -1,4 +1,4 @@
-// neoforge/src/main/java/org/z2six/locksmith/network/LocksmithPayloads.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/network/LocksmithPayloads.java
 package org.z2six.locksmith.network;
 
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -31,6 +31,13 @@ public final class LocksmithPayloads {
                     LockChestPayload.TYPE,
                     LockChestPayload.STREAM_CODEC,
                     LockChestPayload::handle
+            );
+
+            // S2C (HUD feedback)
+            registrar.playToClient(
+                    HudMessagePayload.TYPE,
+                    HudMessagePayload.STREAM_CODEC,
+                    HudMessagePayload::handle
             );
 
             // S2C (doors)
