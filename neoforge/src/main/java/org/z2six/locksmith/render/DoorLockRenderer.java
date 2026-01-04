@@ -284,26 +284,25 @@ public final class DoorLockRenderer {
                 return false;
             }
 
-            // Fade/frame logic: when open, we step through frames 0..4 then stop rendering.
+            // NEW: Two-way fade logic (open fade-out AND close fade-in)
             int frameIndex = DoorLockFadeState.getFrameIndex(posLong, open, nowTick);
 
             ItemStack toRender;
             float alpha = 1.0F;
             boolean useAlphaWrapper = false;
 
-            if (!open) {
-                // Door closed: always show locked variant (no custom model, no fade).
+            if (frameIndex == -2) {
+                // Open + finished fade-out: do not render
+                return false;
+            } else if (frameIndex == -1) {
+                // Closed steady-state (locked model)
                 toRender = baseLockStack.copy();
             } else {
-                // Door open: show unlocked sequence if we have a valid frame; otherwise, do not render.
-                if (frameIndex < 0) {
-                    // Fade finished or not active.
-                    return false;
-                }
+                // Render unlocked frames (opening or closing)
                 toRender = baseLockStack.copy();
                 applyCustomModelData(toRender, frameIndex);
 
-                alpha = computeAlphaFromFrame(frameIndex);
+                alpha = DoorLockFadeState.getAlpha(posLong, open, nowTick);
                 if (alpha < 0.999F) {
                     useAlphaWrapper = true;
                 }
@@ -346,7 +345,6 @@ public final class DoorLockRenderer {
             double hingeLeftMag = useProfile ? profile.hingeNudgeLeft : LockRenderTuning.NUDGE_HINGE_LEFT;
             double hingeRightMag = useProfile ? profile.hingeNudgeRight : LockRenderTuning.NUDGE_HINGE_RIGHT;
             double hingeSignedNudge = (hinge == DoorHingeSide.LEFT) ? -hingeLeftMag : hingeRightMag;
-
             double finalX = baseOffsetX + hingeSignedNudge;
             double finalY = baseOffsetY;
             double finalZ = baseOffsetZ;
@@ -462,25 +460,25 @@ public final class DoorLockRenderer {
                 }
             }
 
-            // Fade/frame logic identical to doors.
+            // NEW: Two-way fade logic (open fade-out AND close fade-in)
             int frameIndex = DoorLockFadeState.getFrameIndex(posLong, open, nowTick);
 
             ItemStack toRender;
             float alpha = 1.0F;
             boolean useAlphaWrapper = false;
 
-            if (!open) {
-                // Closed chest: locked variant only.
+            if (frameIndex == -2) {
+                // Open + finished fade-out: do not render
+                return false;
+            } else if (frameIndex == -1) {
+                // Closed steady-state (locked model)
                 toRender = baseLockStack.copy();
             } else {
-                if (frameIndex < 0) {
-                    // Fade complete / not active.
-                    return false;
-                }
+                // Render unlocked frames (opening or closing)
                 toRender = baseLockStack.copy();
                 applyCustomModelData(toRender, frameIndex);
 
-                alpha = computeAlphaFromFrame(frameIndex);
+                alpha = DoorLockFadeState.getAlpha(posLong, open, nowTick);
                 if (alpha < 0.999F) {
                     useAlphaWrapper = true;
                 }
@@ -541,10 +539,8 @@ public final class DoorLockRenderer {
             double finalX = baseOffsetX;
             if (type != ChestType.SINGLE && doubleNudgeX != 0.0D) {
                 if (type == ChestType.LEFT) {
-                    // LEFT half: move lock toward the center seam (right side of the left chest).
                     finalX += doubleNudgeX;
                 } else if (type == ChestType.RIGHT) {
-                    // RIGHT half: move lock toward the center seam (left side of the right chest).
                     finalX -= doubleNudgeX;
                 }
             }
@@ -634,7 +630,7 @@ public final class DoorLockRenderer {
     /**
      * Apply CustomModelData for unlocked frames (0..4) on 1.21.1.
      * Your item model overrides:
-     *   custom_model_data 0..4 → lock_iron_unlocked0..4
+     *   custom_model_data 0..4 -> lock_iron_unlocked0..4
      */
     private static void applyCustomModelData(ItemStack stack, int frameIndex) {
         try {
@@ -645,25 +641,6 @@ public final class DoorLockRenderer {
         } catch (Throwable t) {
             LOG.warn("[Locksmith][DoorLockRenderer] applyCustomModelData failed (non-fatal). frameIndex={}", frameIndex, t);
         }
-    }
-
-    /**
-     * Map frame index → alpha. We have 5 frames (0..4),
-     * and we want the fade to happen in lockstep with the animation:
-     *   frame 0 → alpha 1.0
-     *   frame 1 → alpha 0.8
-     *   frame 2 → alpha 0.6
-     *   frame 3 → alpha 0.4
-     *   frame 4 → alpha 0.2
-     */
-    private static float computeAlphaFromFrame(int frameIndex) {
-        return switch (frameIndex) {
-            case 0 -> 1.0F;
-            case 1 -> 0.8F;
-            case 2 -> 0.6F;
-            case 3 -> 0.4F;
-            default -> 0.2F;
-        };
     }
 
     // ------------------------------------------------------------------------
