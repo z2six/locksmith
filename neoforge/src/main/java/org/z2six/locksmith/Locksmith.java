@@ -3,6 +3,7 @@ package org.z2six.locksmith;
 
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
@@ -11,6 +12,7 @@ import org.z2six.locksmith.client.ClientModBusEvents;
 import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.config.LocksmithClientConfig;
 import org.z2six.locksmith.event.LocksmithChestEvents;
+import org.z2six.locksmith.event.LocksmithCuriosEvents;
 import org.z2six.locksmith.event.LocksmithDoorEvents;
 import org.z2six.locksmith.event.LocksmithProfileSyncEvents;
 import org.z2six.locksmith.network.LocksmithPayloads;
@@ -96,6 +98,14 @@ public class Locksmith {
             LOG.error("[Locksmith] FAILED to register gameplay events (this is bad).", t);
         }
 
+        // Curios (optional) - server-side enforcement + quick-equip support
+        try {
+            NeoForge.EVENT_BUS.addListener(LocksmithCuriosEvents::onPlayerTickPost);
+            LOG.info("[Locksmith] Registered optional Curios enforcement tick handler.");
+        } catch (Throwable t) {
+            LOG.error("[Locksmith] FAILED to register Curios enforcement tick handler (non-fatal).", t);
+        }
+
         // ✅ Correct client init wiring:
         // Register client-only listeners on the MOD event bus using FML client setup.
         try {
@@ -105,6 +115,29 @@ public class Locksmith {
             }
         } catch (Throwable t) {
             LOG.error("[Locksmith] Client MOD-bus registration failed (non-fatal).", t);
+        }
+
+        // Client-only: Shift+RMB quick-equip into Curios key slot (optional integration)
+        try {
+            if (FMLEnvironment.dist.isClient()) {
+                // Use reflection so this class is never linked on dedicated server.
+                Class<?> clazz = Class.forName("org.z2six.locksmith.client.ClientCuriosKeyEquipEvents");
+                clazz.getMethod("register").invoke(null);
+                LOG.info("[Locksmith] Registered client Curios quick-equip screen listener (reflection).");
+            }
+        } catch (Throwable t) {
+            LOG.debug("[Locksmith] Client Curios quick-equip screen listener not registered (non-fatal).", t);
+        }
+
+        // Optional Curios compat bootstrap (currently just logs; kept as a hook point)
+        try {
+            if (ModList.get().isLoaded("curios")) {
+                LOG.info("[Locksmith] Curios detected: optional key-slot integration enabled.");
+            } else {
+                LOG.info("[Locksmith] Curios not detected: running without Curios integration.");
+            }
+        } catch (Throwable t) {
+            LOG.debug("[Locksmith] Curios detection failed (non-fatal).", t);
         }
 
         ModItems.debugLogRegisteredItemsSafe();

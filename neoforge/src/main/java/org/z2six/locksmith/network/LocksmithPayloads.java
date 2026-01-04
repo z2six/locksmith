@@ -33,6 +33,13 @@ public final class LocksmithPayloads {
                     LockChestPayload::handle
             );
 
+            // NEW: C2S (Curios optional quick-equip)
+            registrar.playToServer(
+                    QuickEquipCuriosKeyPayload.TYPE,
+                    QuickEquipCuriosKeyPayload.STREAM_CODEC,
+                    QuickEquipCuriosKeyPayload::handle
+            );
+
             // S2C (HUD feedback)
             registrar.playToClient(
                     HudMessagePayload.TYPE,

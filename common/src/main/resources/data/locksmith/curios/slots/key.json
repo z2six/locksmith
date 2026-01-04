@@ -1,0 +1,15 @@
+{
+  "replace": false,
+  "order": 500,
+  "size": 1,
+  "icon": "locksmith:slot/lock_iron_curios",
+  "validators": [
+    "curios:tag"
+  ],
+  "neoforge:conditions": [
+    {
+      "type": "neoforge:mod_loaded",
+      "modid": "curios"
+    }
+  ]
+}

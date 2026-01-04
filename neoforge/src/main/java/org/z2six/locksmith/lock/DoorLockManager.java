@@ -5,6 +5,7 @@ import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -12,10 +13,14 @@ import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.neoforged.fml.ModList;
 import org.slf4j.Logger;
-import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.item.IronKeyItem;
+import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.world.DoorLockSavedData;
+
+import java.lang.reflect.Method;
+import java.util.Optional;
 
 public final class DoorLockManager {
 
@@ -52,11 +57,23 @@ public final class DoorLockManager {
         }
     }
 
+    /**
+     * Returns true if the player has a registered iron key whose hash matches requiredHash.
+     *
+     * Sources checked (in order):
+     *  - main inventory items
+     *  - offhand
+     *  - armor
+     *  - Curios "key" slot (optional, reflection-based)
+     *
+     * IMPORTANT: Curios is NEVER required. If Curios isn't installed, or reflection fails, we just skip it.
+     */
     public static boolean hasMatchingKeyAnywhere(Player player, String requiredHash) {
         try {
             if (player == null) return false;
             if (requiredHash == null || requiredHash.isBlank()) return false;
 
+            // Vanilla inventories
             for (ItemStack s : player.getInventory().items) {
                 if (stackMatchesHash(s, requiredHash)) return true;
             }
@@ -65,6 +82,11 @@ public final class DoorLockManager {
             }
             for (ItemStack s : player.getInventory().armor) {
                 if (stackMatchesHash(s, requiredHash)) return true;
+            }
+
+            // Optional Curios slot ("key")
+            if (hasMatchingKeyInCuriosKeySlot(player, requiredHash)) {
+                return true;
             }
 
             return false;
@@ -84,6 +106,111 @@ public final class DoorLockManager {
         } catch (Throwable t) {
             LOG.warn("[Locksmith][DoorLockManager] stackMatchesHash failed (non-fatal).", t);
             return false;
+        }
+    }
+
+    /**
+     * Checks Curios slot type "key" for a matching registered iron key.
+     *
+     * Reflection path (Curios 1.21+):
+     * CuriosApi.getCuriosInventory(LivingEntity) -> Optional<ICuriosItemHandler>
+     * handler.getStacksHandler("key") -> Optional<ICurioStacksHandler>
+     * stacksHandler.getStacks() -> IDynamicStackHandler
+     * dynamic.getSlots(), dynamic.getStackInSlot(i)
+     *
+     * If Curios isn't loaded or anything fails, returns false and never crashes.
+     */
+    private static boolean hasMatchingKeyInCuriosKeySlot(Player player, String requiredHash) {
+        try {
+            if (player == null) return false;
+            if (requiredHash == null || requiredHash.isBlank()) return false;
+
+            // Curios is optional: never assume it exists.
+            boolean curiosLoaded;
+            try {
+                curiosLoaded = ModList.get().isLoaded("curios");
+            } catch (Throwable t) {
+                curiosLoaded = false;
+            }
+            if (!curiosLoaded) return false;
+
+            Optional<Object> dynamicOpt = getCuriosDynamicHandler(player, "key");
+            if (dynamicOpt.isEmpty()) return false;
+
+            Object dynamic = dynamicOpt.get();
+            if (dynamic == null) return false;
+
+            Method getSlots = dynamic.getClass().getMethod("getSlots");
+            int slots = (int) getSlots.invoke(dynamic);
+            if (slots <= 0) return false;
+
+            Method getStackInSlot = dynamic.getClass().getMethod("getStackInSlot", int.class);
+
+            for (int i = 0; i < slots; i++) {
+                Object stackObj = getStackInSlot.invoke(dynamic, i);
+                if (!(stackObj instanceof ItemStack stack)) continue;
+                if (stack.isEmpty()) continue;
+
+                if (stackMatchesHash(stack, requiredHash)) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("[Locksmith][Curios] Found matching key hash in Curios 'key' slot for player={} slotIndex={}",
+                                player.getName().getString(), i);
+                    }
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (Throwable t) {
+            // Non-fatal: Curios might be present but API changed; do not crash gameplay.
+            LOG.debug("[Locksmith][DoorLockManager] hasMatchingKeyInCuriosKeySlot failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    /**
+     * Returns Curios IDynamicStackHandler object for a slot type via reflection, if present.
+     * Never throws out of this method; always Optional.empty() on failure.
+     */
+    private static Optional<Object> getCuriosDynamicHandler(LivingEntity entity, String slotType) {
+        try {
+            if (entity == null) return Optional.empty();
+            if (slotType == null || slotType.isBlank()) return Optional.empty();
+
+            // CuriosApi.getCuriosInventory(LivingEntity)
+            Class<?> curiosApi = Class.forName("top.theillusivec4.curios.api.CuriosApi");
+            Method getInv = curiosApi.getMethod("getCuriosInventory", LivingEntity.class);
+            Object invOptObj = getInv.invoke(null, entity);
+
+            if (!(invOptObj instanceof Optional<?> invOpt) || invOpt.isEmpty()) {
+                return Optional.empty();
+            }
+
+            Object curiosHandler = invOpt.get();
+            if (curiosHandler == null) return Optional.empty();
+
+            // handler.getStacksHandler("key")
+            Method getStacksHandler = curiosHandler.getClass().getMethod("getStacksHandler", String.class);
+            Object stacksOptObj = getStacksHandler.invoke(curiosHandler, slotType);
+
+            if (!(stacksOptObj instanceof Optional<?> stacksOpt) || stacksOpt.isEmpty()) {
+                return Optional.empty();
+            }
+
+            Object stacksHandler = stacksOpt.get();
+            if (stacksHandler == null) return Optional.empty();
+
+            // stacksHandler.getStacks() -> dynamic
+            Method getStacks = stacksHandler.getClass().getMethod("getStacks");
+            Object dynamic = getStacks.invoke(stacksHandler);
+
+            return Optional.ofNullable(dynamic);
+        } catch (Throwable t) {
+            // Keep it quiet-ish; this runs frequently on client + server.
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("[Locksmith][DoorLockManager] getCuriosDynamicHandler failed (non-fatal). slotType={}", slotType, t);
+            }
+            return Optional.empty();
         }
     }
 
@@ -209,7 +336,6 @@ public final class DoorLockManager {
             synchronized (FORCE_CLOSE_TICKS) {
                 keysSnapshot = FORCE_CLOSE_TICKS.keySet().toLongArray();
             }
-
             for (long posLong : keysSnapshot) {
                 if (maxPerTick > 0 && processed >= maxPerTick) break;
 
