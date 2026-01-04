@@ -5,6 +5,7 @@ import com.mojang.logging.LogUtils;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -13,6 +14,7 @@ import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.neoforged.fml.ModList;
 import org.slf4j.Logger;
 import org.z2six.locksmith.item.IronKeyItem;
@@ -110,22 +112,178 @@ public final class DoorLockManager {
     }
 
     /**
-     * Checks Curios slot type "key" for a matching registered iron key.
+     * Finds the "double door mate" for a LOCKED door, by checking the block on the opposite side of the hinge.
      *
-     * Reflection path (Curios 1.21+):
-     * CuriosApi.getCuriosInventory(LivingEntity) -> Optional<ICuriosItemHandler>
-     * handler.getStacksHandler("key") -> Optional<ICurioStacksHandler>
-     * stacksHandler.getStacks() -> IDynamicStackHandler
-     * dynamic.getSlots(), dynamic.getStackInSlot(i)
+     * Requirements to be considered a mate:
+     *  - neighbor is a door block
+     *  - same FACING
+     *  - opposite HINGE side
+     *  - neighbor door's LOWER block pos is computed/normalized
+     *  - neighbor door is ALSO locked by Locksmith (so we do not affect vanilla/unlocked doors)
      *
-     * If Curios isn't loaded or anything fails, returns false and never crashes.
+     * Returns null if no valid mate exists.
+     *
+     * This is deliberately limited to a single neighbor lookup: it will never chain beyond 2 doors.
      */
+    public static BlockPos findLockedDoubleDoorMate(ServerLevel level, BlockPos doorLowerPos) {
+        try {
+            if (level == null || doorLowerPos == null) return null;
+
+            BlockState lower = level.getBlockState(doorLowerPos);
+            if (!(lower.getBlock() instanceof DoorBlock)) return null;
+
+            // Must be locked itself (paranoia)
+            DoorLockSavedData data = DoorLockSavedData.get(level);
+            if (!data.isLocked(doorLowerPos)) return null;
+
+            if (!lower.hasProperty(DoorBlock.FACING) || !lower.hasProperty(DoorBlock.HINGE) || !lower.hasProperty(DoorBlock.HALF)) {
+                return null;
+            }
+
+            // Ensure we are operating on LOWER half pos
+            try {
+                if (lower.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
+                    doorLowerPos = doorLowerPos.below();
+                    lower = level.getBlockState(doorLowerPos);
+                    if (!(lower.getBlock() instanceof DoorBlock)) return null;
+                }
+            } catch (Throwable ignored) {
+            }
+
+            Direction facing = Direction.NORTH;
+            DoorHingeSide hinge = DoorHingeSide.LEFT;
+            try {
+                facing = lower.getValue(DoorBlock.FACING);
+            } catch (Throwable ignored) {
+            }
+            try {
+                hinge = lower.getValue(DoorBlock.HINGE);
+            } catch (Throwable ignored) {
+            }
+
+            // "Opposite side of hinge": if hinge is LEFT, mate is on RIGHT side, and vice versa.
+            Direction sideDir = (hinge == DoorHingeSide.LEFT) ? facing.getClockWise() : facing.getCounterClockWise();
+            BlockPos neighborPos = doorLowerPos.relative(sideDir);
+
+            BlockState neighborState = level.getBlockState(neighborPos);
+            if (!(neighborState.getBlock() instanceof DoorBlock)) return null;
+
+            // Normalize neighbor pos to LOWER half
+            BlockPos neighborLower = neighborPos;
+            try {
+                if (neighborState.hasProperty(DoorBlock.HALF) && neighborState.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
+                    neighborLower = neighborPos.below();
+                    neighborState = level.getBlockState(neighborLower);
+                }
+            } catch (Throwable ignored) {
+            }
+            if (!(neighborState.getBlock() instanceof DoorBlock)) return null;
+
+            // Must match facing
+            try {
+                if (neighborState.hasProperty(DoorBlock.FACING)) {
+                    Direction nf = neighborState.getValue(DoorBlock.FACING);
+                    if (nf != facing) return null;
+                } else {
+                    return null;
+                }
+            } catch (Throwable t) {
+                return null;
+            }
+
+            // Must have opposite hinge
+            try {
+                if (neighborState.hasProperty(DoorBlock.HINGE)) {
+                    DoorHingeSide nh = neighborState.getValue(DoorBlock.HINGE);
+                    boolean opposite = (hinge == DoorHingeSide.LEFT && nh == DoorHingeSide.RIGHT)
+                            || (hinge == DoorHingeSide.RIGHT && nh == DoorHingeSide.LEFT);
+                    if (!opposite) return null;
+                } else {
+                    return null;
+                }
+            } catch (Throwable t) {
+                return null;
+            }
+
+            // Neighbor must ALSO be locked by Locksmith
+            if (!data.isLocked(neighborLower)) {
+                return null;
+            }
+
+            return neighborLower;
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockManager] findLockedDoubleDoorMate failed (non-fatal).", t);
+            return null;
+        }
+    }
+
+    /**
+     * Opens/closes a door at its LOWER position using DoorBlock#setOpen if available.
+     * Safe, no crash, logs on failure. Works server-side.
+     */
+    public static void setDoorOpen(ServerLevel level, BlockPos doorLowerPos, Player actor, boolean open) {
+        try {
+            if (level == null || doorLowerPos == null) return;
+
+            BlockState st = level.getBlockState(doorLowerPos);
+            if (!(st.getBlock() instanceof DoorBlock door)) return;
+
+            // Ensure we have LOWER pos; if upper given, shift down.
+            try {
+                if (st.hasProperty(DoorBlock.HALF) && st.getValue(DoorBlock.HALF) == DoubleBlockHalf.UPPER) {
+                    doorLowerPos = doorLowerPos.below();
+                    st = level.getBlockState(doorLowerPos);
+                    if (!(st.getBlock() instanceof DoorBlock door2)) return;
+                    door = door2;
+                }
+            } catch (Throwable ignored) {
+            }
+
+            // If already desired state, do nothing.
+            try {
+                if (st.hasProperty(DoorBlock.OPEN)) {
+                    boolean current = st.getValue(DoorBlock.OPEN);
+                    if (current == open) return;
+                }
+            } catch (Throwable ignored) {
+            }
+
+            // DoorBlock#setOpen triggers correct sounds + neighbor updates.
+            try {
+                door.setOpen(actor, level, st, doorLowerPos, open);
+            } catch (Throwable t) {
+                // Fallback: direct blockstate toggles (non-ideal but better than failing).
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][DoorLockManager] setDoorOpen: DoorBlock#setOpen failed, falling back to state set. open={}", open, t);
+                }
+                try {
+                    if (st.hasProperty(DoorBlock.OPEN)) {
+                        BlockState newLower = st.setValue(DoorBlock.OPEN, open);
+                        level.setBlock(doorLowerPos, newLower, 3);
+
+                        BlockPos upperPos = doorLowerPos.above();
+                        BlockState upper = level.getBlockState(upperPos);
+                        if (upper.getBlock() instanceof DoorBlock && upper.hasProperty(DoorBlock.OPEN)) {
+                            BlockState newUpper = upper.setValue(DoorBlock.OPEN, open);
+                            level.setBlock(upperPos, newUpper, 3);
+                        }
+                    }
+                } catch (Throwable t2) {
+                    LOG.warn("[Locksmith][DoorLockManager] setDoorOpen fallback failed (non-fatal).", t2);
+                }
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockManager] setDoorOpen failed (non-fatal). open={}", open, t);
+        }
+    }
+
+    // ---------------- Curios support (unchanged logic, kept here) ----------------
+
     private static boolean hasMatchingKeyInCuriosKeySlot(Player player, String requiredHash) {
         try {
             if (player == null) return false;
             if (requiredHash == null || requiredHash.isBlank()) return false;
 
-            // Curios is optional: never assume it exists.
             boolean curiosLoaded;
             try {
                 curiosLoaded = ModList.get().isLoaded("curios");
@@ -162,22 +320,16 @@ public final class DoorLockManager {
 
             return false;
         } catch (Throwable t) {
-            // Non-fatal: Curios might be present but API changed; do not crash gameplay.
             LOG.debug("[Locksmith][DoorLockManager] hasMatchingKeyInCuriosKeySlot failed (non-fatal).", t);
             return false;
         }
     }
 
-    /**
-     * Returns Curios IDynamicStackHandler object for a slot type via reflection, if present.
-     * Never throws out of this method; always Optional.empty() on failure.
-     */
     private static Optional<Object> getCuriosDynamicHandler(LivingEntity entity, String slotType) {
         try {
             if (entity == null) return Optional.empty();
             if (slotType == null || slotType.isBlank()) return Optional.empty();
 
-            // CuriosApi.getCuriosInventory(LivingEntity)
             Class<?> curiosApi = Class.forName("top.theillusivec4.curios.api.CuriosApi");
             Method getInv = curiosApi.getMethod("getCuriosInventory", LivingEntity.class);
             Object invOptObj = getInv.invoke(null, entity);
@@ -189,7 +341,6 @@ public final class DoorLockManager {
             Object curiosHandler = invOpt.get();
             if (curiosHandler == null) return Optional.empty();
 
-            // handler.getStacksHandler("key")
             Method getStacksHandler = curiosHandler.getClass().getMethod("getStacksHandler", String.class);
             Object stacksOptObj = getStacksHandler.invoke(curiosHandler, slotType);
 
@@ -200,19 +351,19 @@ public final class DoorLockManager {
             Object stacksHandler = stacksOpt.get();
             if (stacksHandler == null) return Optional.empty();
 
-            // stacksHandler.getStacks() -> dynamic
             Method getStacks = stacksHandler.getClass().getMethod("getStacks");
             Object dynamic = getStacks.invoke(stacksHandler);
 
             return Optional.ofNullable(dynamic);
         } catch (Throwable t) {
-            // Keep it quiet-ish; this runs frequently on client + server.
             if (LOG.isDebugEnabled()) {
                 LOG.debug("[Locksmith][DoorLockManager] getCuriosDynamicHandler failed (non-fatal). slotType={}", slotType, t);
             }
             return Optional.empty();
         }
     }
+
+    // ---------------- Existing locking + force-close logic (unchanged) ----------------
 
     public static boolean tryLockDoorWithHeldKey(ServerLevelAccessor level, Player player, BlockPos doorLowerPos, ItemStack heldKey) {
         try {
@@ -264,7 +415,7 @@ public final class DoorLockManager {
     public static void forceCloseDoorClient(Level level, BlockPos doorLowerPos) {
         try {
             if (level == null || doorLowerPos == null) return;
-            if (!level.isClientSide) return; // paranoia: never touch server world here.
+            if (!level.isClientSide) return;
             forceCloseDoorAnyLevel(level, doorLowerPos, "[ClientVisual]");
         } catch (Throwable t) {
             LOG.warn("[Locksmith][DoorLockManager] forceCloseDoorClient failed (non-fatal).", t);
@@ -280,7 +431,6 @@ public final class DoorLockManager {
 
             if (lower.hasProperty(DoorBlock.OPEN) && lower.getValue(DoorBlock.OPEN)) {
                 BlockState closedLower = lower.setValue(DoorBlock.OPEN, false);
-                // flag 3: update + render. Works fine for client visual.
                 level.setBlock(doorLowerPos, closedLower, 3);
                 changed = true;
             }
@@ -295,7 +445,6 @@ public final class DoorLockManager {
                 }
             }
 
-            // Only occasionally log to avoid spam, but enough to debug.
             if (changed && LOG.isDebugEnabled() && (level.getGameTime() % 5 == 0)) {
                 Direction facing = lower.hasProperty(DoorBlock.FACING) ? lower.getValue(DoorBlock.FACING) : Direction.NORTH;
                 LOG.debug("[Locksmith][DoorLockManager] {} forceCloseDoor applied at {} facing={}", tag, doorLowerPos, facing);

@@ -46,7 +46,6 @@ public final class LocksmithDoorEvents {
     private static final Map<String, Long> DENY_THROTTLE = new HashMap<>();
     private static final int CLEANUP_EVERY_TICKS = 200;
     private static final int CLEANUP_MAX_CHECK_PER_PASS = 512;
-
     private static final int CLIENT_BLOCK_OPEN_TICKS_AFTER_LOCK_CLICK = 6;
 
     private static final int FORCE_CLOSE_AFTER_LOCK_TICKS = 5;
@@ -127,7 +126,6 @@ public final class LocksmithDoorEvents {
                         event.setCancellationResult(InteractionResult.SUCCESS);
                         safeDenyVanillaUse(event);
 
-                        // NOTE: We do NOT show "success" here anymore; server will tell us via HudMessagePayload.
                         try {
                             PacketDistributor.sendToServer(new org.z2six.locksmith.network.LockDoorPayload(doorLong));
                             LOG.debug("[Locksmith][Client] Lock click ate interaction and sent LockDoorPayload pos={}", doorPos);
@@ -146,8 +144,6 @@ public final class LocksmithDoorEvents {
                             event.setCanceled(true);
                             event.setCancellationResult(InteractionResult.FAIL);
                             safeDenyVanillaUse(event);
-
-                            // Optional: client can show instantly, but server will also send for dedicated consistency.
                             org.z2six.locksmith.client.ClientHudMessages.showDoorLockedNoKey();
 
                             LOG.debug("[Locksmith][Client] Denied locked door use at {} (no key).", doorPos);
@@ -200,7 +196,6 @@ public final class LocksmithDoorEvents {
                             PacketDistributor.sendToPlayer(other, new AddDoorLockPayload(doorPos.asLong(), hash));
                         }
 
-                        // ✅ Dedicated-safe HUD message: S2C
                         try {
                             PacketDistributor.sendToPlayer(sp, new HudMessagePayload(HudMessagePayload.DOOR_LOCK_SUCCESS));
                             LOG.info("[Locksmith][DoorMessages] Sent DOOR_LOCK_SUCCESS HUD payload to {} at {}.",
@@ -218,7 +213,7 @@ public final class LocksmithDoorEvents {
                 }
             }
 
-            // Locked door: permission check + optional auto-close
+            // Locked door: permission check + optional auto-close + double-door sync open/close
             if (data.isLocked(doorPos)) {
                 String requiredHash = data.getHash(doorPos);
                 if (requiredHash == null || requiredHash.isBlank()) {
@@ -237,19 +232,76 @@ public final class LocksmithDoorEvents {
                     LOG.debug("[Locksmith] Blocked door open at {} for player {} (no matching key).",
                             doorPos, sp.getName().getString());
                 } else {
+                    // Double-door sync only applies to LOCKED doors and only to 2 doors max (self + mate).
+                    // We ONLY intervene (cancel vanilla) if a valid locked mate exists.
+                    boolean ddSync = false;
+                    try {
+                        ddSync = LocksmithClientConfig.isDoubleDoorSyncEnabled();
+                    } catch (Throwable t) {
+                        ddSync = false;
+                        LOG.warn("[Locksmith] Failed reading doubleDoorSyncEnabled (non-fatal).", t);
+                    }
+
+                    BlockPos matePos = null;
+                    if (ddSync && event.getHand() == InteractionHand.MAIN_HAND) {
+                        try {
+                            matePos = DoorLockManager.findLockedDoubleDoorMate(sLevel, doorPos);
+                        } catch (Throwable t) {
+                            matePos = null;
+                            LOG.warn("[Locksmith] findLockedDoubleDoorMate failed (non-fatal).", t);
+                        }
+                    }
+
+                    // Read current open state from the server world right now (authoritative)
+                    boolean isCurrentlyOpen = false;
+                    try {
+                        BlockState st = sLevel.getBlockState(doorPos);
+                        if (st != null && st.getBlock() instanceof DoorBlock && st.hasProperty(DoorBlock.OPEN)) {
+                            isCurrentlyOpen = st.getValue(DoorBlock.OPEN);
+                        }
+                    } catch (Throwable t) {
+                        LOG.warn("[Locksmith] Failed to read door OPEN property at {} (non-fatal).", doorPos, t);
+                    }
+
+                    // If we have a mate, we will handle open/close ourselves to keep both in sync.
+                    if (matePos != null) {
+                        boolean targetOpen = !isCurrentlyOpen;
+
+                        event.setCanceled(true);
+                        event.setCancellationResult(InteractionResult.SUCCESS);
+                        safeDenyVanillaUse(event);
+
+                        try {
+                            DoorLockManager.setDoorOpen(sLevel, doorPos, sp, targetOpen);
+                        } catch (Throwable t) {
+                            LOG.warn("[Locksmith] Failed setDoorOpen on primary door (non-fatal). pos={} open={}", doorPos, targetOpen, t);
+                        }
+
+                        try {
+                            DoorLockManager.setDoorOpen(sLevel, matePos, sp, targetOpen);
+                        } catch (Throwable t) {
+                            LOG.warn("[Locksmith] Failed setDoorOpen on mate door (non-fatal). pos={} open={}", matePos, targetOpen, t);
+                        }
+
+                        if (LOG.isDebugEnabled()) {
+                            LOG.debug("[Locksmith] Double-door sync applied at {} <-> {} (openNow={} -> targetOpen={})",
+                                    doorPos, matePos, isCurrentlyOpen, targetOpen);
+                        }
+
+                        // Auto-close scheduling: schedule when we are opening (targetOpen == true)
+                        if (targetOpen) {
+                            tryAutoCloseScheduleForDoorAndMate(sLevel, doorPos, matePos);
+                        }
+
+                        return;
+                    }
+
+                    // No mate or sync disabled: keep existing behavior (vanilla toggles door),
+                    // but we still schedule auto-close when the door was closed at click time.
                     try {
                         if (LocksmithClientConfig.isAutoCloseEnabled()) {
                             int ticks = LocksmithClientConfig.getAutoCloseTicks();
                             if (ticks > 0) {
-                                boolean isCurrentlyOpen = false;
-                                try {
-                                    if (doorState.hasProperty(DoorBlock.OPEN)) {
-                                        isCurrentlyOpen = doorState.getValue(DoorBlock.OPEN);
-                                    }
-                                } catch (Throwable t) {
-                                    LOG.warn("[Locksmith] Failed to read door OPEN property at {} (non-fatal).", doorPos, t);
-                                }
-
                                 if (!isCurrentlyOpen) {
                                     scheduleAutoCloseLockedDoor(sLevel, doorPos, ticks);
                                     if (LOG.isDebugEnabled()) {
@@ -370,6 +422,30 @@ public final class LocksmithDoorEvents {
     // Auto-close helpers
     // =========================
 
+    private static void tryAutoCloseScheduleForDoorAndMate(ServerLevel level, BlockPos doorPos, BlockPos matePos) {
+        try {
+            if (level == null || doorPos == null) return;
+
+            if (!LocksmithClientConfig.isAutoCloseEnabled()) return;
+            int ticks = LocksmithClientConfig.getAutoCloseTicks();
+            if (ticks <= 0) return;
+
+            // Always schedule the clicked door
+            scheduleAutoCloseLockedDoor(level, doorPos, ticks);
+
+            // If mate exists, schedule it too (limit is naturally 2: self + mate).
+            if (matePos != null) {
+                scheduleAutoCloseLockedDoor(level, matePos, ticks);
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("[Locksmith] Auto-close scheduled for door={} mate={} ticks={}", doorPos, matePos, ticks);
+            }
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith] tryAutoCloseScheduleForDoorAndMate failed (non-fatal).", t);
+        }
+    }
+
     private static void scheduleAutoCloseLockedDoor(ServerLevel level, BlockPos doorPos, int ticks) {
         try {
             if (level == null || doorPos == null) return;
@@ -408,6 +484,7 @@ public final class LocksmithDoorEvents {
 
             for (long posLong : keys) {
                 if (maxPerTick > 0 && processed >= maxPerTick) break;
+
                 int remaining = map.get(posLong);
                 if (remaining <= 0) {
                     map.remove(posLong);
@@ -417,8 +494,25 @@ public final class LocksmithDoorEvents {
                 remaining--;
                 if (remaining <= 0) {
                     BlockPos pos = BlockPos.of(posLong);
-                    DoorLockManager.forceCloseDoor(level, pos);
-                    DoorLockManager.requestForceClose(level, pos, FORCE_CLOSE_AFTER_LOCK_TICKS);
+
+                    // Only close if it is still locked (prevents grief-y scheduling on unlocked doors)
+                    boolean stillLocked = false;
+                    try {
+                        DoorLockSavedData data = DoorLockSavedData.get(level);
+                        stillLocked = data.isLocked(pos);
+                    } catch (Throwable t) {
+                        stillLocked = false;
+                    }
+
+                    if (stillLocked) {
+                        DoorLockManager.forceCloseDoor(level, pos);
+                        DoorLockManager.requestForceClose(level, pos, FORCE_CLOSE_AFTER_LOCK_TICKS);
+                    } else {
+                        if (LOG.isDebugEnabled()) {
+                            LOG.debug("[Locksmith] Auto-close skip: door no longer locked at {}", pos);
+                        }
+                    }
+
                     map.remove(posLong);
                     processed++;
 
@@ -468,7 +562,6 @@ public final class LocksmithDoorEvents {
             if (gameTime - last < 20) return;
             DENY_THROTTLE.put(id, gameTime);
 
-            // ✅ Dedicated-safe HUD message: S2C
             try {
                 PacketDistributor.sendToPlayer(player, new HudMessagePayload(HudMessagePayload.DOOR_LOCKED_NO_KEY));
                 LOG.info("[Locksmith][DoorMessages] Sent DOOR_LOCKED_NO_KEY HUD payload to {} at {}.",

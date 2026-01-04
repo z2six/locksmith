@@ -1,4 +1,4 @@
-// MainFile: LocksmithClientConfig.java
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/config/LocksmithClientConfig.java
 package org.z2six.locksmith.config;
 
 import net.neoforged.fml.loading.FMLPaths;
@@ -22,19 +22,24 @@ import java.util.List;
  * [qol]
  * autoCloseLockedDoors = true
  * autoCloseTicks = 20
+ * doubleDoorSyncEnabled = true
+ *
  * hudMessagesEnabled = true
  * hudMessageTicks = 40
  * hudScale = 1.0
  * hudOffsetY = -35
  * ---------------------------------
  *
- * - autoCloseLockedDoors : enable/disable auto-close for locked doors
- * - autoCloseTicks       : delay in ticks (20 = 1 second)
+ * - autoCloseLockedDoors       : enable/disable auto-close for locked doors
+ * - autoCloseTicks             : delay in ticks (20 = 1 second)
  *
- * - hudMessagesEnabled   : enable/disable HUD feedback text
- * - hudMessageTicks      : how long to show HUD messages (GUI frames, ~20 = 1s)
- * - hudScale             : HUD text scale (1.0 = normal)
- * - hudOffsetY           : vertical offset from screen center (negative = up)
+ * - doubleDoorSyncEnabled      : if true, opening/closing a LOCKED door will also open/close its paired "double door"
+ *                                (only up to 2 doors, and only if the neighbor door is ALSO locked by Locksmith).
+ *
+ * - hudMessagesEnabled         : enable/disable HUD feedback text
+ * - hudMessageTicks            : how long to show HUD messages (GUI frames, ~20 = 1s)
+ * - hudScale                   : HUD text scale (1.0 = normal)
+ * - hudOffsetY                 : vertical offset from screen center (negative = up)
  *
  * We parse a tiny subset of TOML:
  * - '#' / '//' / ';' comments
@@ -53,6 +58,9 @@ public final class LocksmithClientConfig {
     private static final int MIN_TICKS = 1;
     private static final int MAX_TICKS = 20 * 60 * 60; // 1 real-time hour at 20 TPS
 
+    // Double-door sync (open + close)
+    private static final boolean DEFAULT_DOUBLE_DOOR_SYNC_ENABLED = true;
+
     // HUD messages
     private static final boolean DEFAULT_HUD_MESSAGES_ENABLED = true;
     private static final int DEFAULT_HUD_MESSAGE_TICKS = 40; // ~2 seconds at 20 FPS
@@ -61,6 +69,8 @@ public final class LocksmithClientConfig {
 
     private static volatile boolean autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
     private static volatile int autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+
+    private static volatile boolean doubleDoorSyncEnabled = DEFAULT_DOUBLE_DOOR_SYNC_ENABLED;
 
     private static volatile boolean hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
     private static volatile int hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
@@ -88,6 +98,12 @@ public final class LocksmithClientConfig {
 
     public static int getAutoCloseTicks() {
         return autoCloseTicks;
+    }
+
+    // ---------- Double-door sync getter ----------
+
+    public static boolean isDoubleDoorSyncEnabled() {
+        return doubleDoorSyncEnabled;
     }
 
     // ---------- HUD message getters ----------
@@ -127,6 +143,7 @@ public final class LocksmithClientConfig {
 
                 autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
                 autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+                doubleDoorSyncEnabled = DEFAULT_DOUBLE_DOOR_SYNC_ENABLED;
 
                 hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
                 hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
@@ -135,10 +152,11 @@ public final class LocksmithClientConfig {
 
                 LOG.info(
                         "[Locksmith][ClientConfig] Created default config at {} "
-                                + "(autoCloseEnabled={}, autoCloseTicks={}, hudMessagesEnabled={}, hudMessageTicks={}, hudScale={}, hudOffsetY={})",
+                                + "(autoCloseEnabled={}, autoCloseTicks={}, doubleDoorSyncEnabled={}, hudMessagesEnabled={}, hudMessageTicks={}, hudScale={}, hudOffsetY={})",
                         path.toAbsolutePath(),
                         autoCloseEnabled,
                         autoCloseTicks,
+                        doubleDoorSyncEnabled,
                         hudMessagesEnabled,
                         hudMessageTicks,
                         hudScale,
@@ -150,6 +168,7 @@ public final class LocksmithClientConfig {
             // Load existing file
             boolean enabled = DEFAULT_AUTO_CLOSE_ENABLED;
             int ticks = DEFAULT_AUTO_CLOSE_TICKS;
+            boolean ddSync = DEFAULT_DOUBLE_DOOR_SYNC_ENABLED;
 
             boolean hudEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
             int hudTicks = DEFAULT_HUD_MESSAGE_TICKS;
@@ -162,8 +181,10 @@ public final class LocksmithClientConfig {
             } catch (IOException io) {
                 LOG.error("[Locksmith][ClientConfig] Failed to read {} (non-fatal, using defaults).",
                         path.toAbsolutePath(), io);
+
                 autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
                 autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+                doubleDoorSyncEnabled = DEFAULT_DOUBLE_DOOR_SYNC_ENABLED;
 
                 hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
                 hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
@@ -211,6 +232,18 @@ public final class LocksmithClientConfig {
                         LOG.warn("[Locksmith][ClientConfig] Invalid int for {}: '{}'", key, value);
                     }
                 }
+                // Double door sync keys
+                else if (normKey.equals("doubledoorsyncenabled")
+                        || normKey.equals("double_door_sync_enabled")
+                        || normKey.equals("doubledoorsync")
+                        || normKey.equals("double_door_sync")) {
+                    Boolean parsed = parseBoolean(value);
+                    if (parsed != null) {
+                        ddSync = parsed;
+                    } else {
+                        LOG.warn("[Locksmith][ClientConfig] Invalid boolean for {}: '{}'", key, value);
+                    }
+                }
                 // HUD keys
                 else if (normKey.equals("hudmessagesenabled") || normKey.equals("hud_messages_enabled")) {
                     Boolean parsed = parseBoolean(value);
@@ -245,6 +278,7 @@ public final class LocksmithClientConfig {
 
             autoCloseEnabled = enabled;
             autoCloseTicks = ticks;
+            doubleDoorSyncEnabled = ddSync;
 
             hudMessagesEnabled = hudEnabled;
             hudMessageTicks = hudTicks;
@@ -253,10 +287,11 @@ public final class LocksmithClientConfig {
 
             LOG.info(
                     "[Locksmith][ClientConfig] Loaded config from {} "
-                            + "(autoCloseEnabled={}, autoCloseTicks={}, hudMessagesEnabled={}, hudMessageTicks={}, hudScale={}, hudOffsetY={})",
+                            + "(autoCloseEnabled={}, autoCloseTicks={}, doubleDoorSyncEnabled={}, hudMessagesEnabled={}, hudMessageTicks={}, hudScale={}, hudOffsetY={})",
                     path.toAbsolutePath(),
                     autoCloseEnabled,
                     autoCloseTicks,
+                    doubleDoorSyncEnabled,
                     hudMessagesEnabled,
                     hudMessageTicks,
                     hudScale,
@@ -268,6 +303,7 @@ public final class LocksmithClientConfig {
 
             autoCloseEnabled = DEFAULT_AUTO_CLOSE_ENABLED;
             autoCloseTicks = DEFAULT_AUTO_CLOSE_TICKS;
+            doubleDoorSyncEnabled = DEFAULT_DOUBLE_DOOR_SYNC_ENABLED;
 
             hudMessagesEnabled = DEFAULT_HUD_MESSAGES_ENABLED;
             hudMessageTicks = DEFAULT_HUD_MESSAGE_TICKS;
@@ -294,6 +330,11 @@ public final class LocksmithClientConfig {
             sb.append("# autoCloseLockedDoors = true/false\n");
             sb.append("# autoCloseTicks       = ticks before auto-close (20 = 1 second)\n");
             sb.append("\n");
+            sb.append("# Double door sync for LOCKED doors only.\n");
+            sb.append("# If true, opening/closing a LOCKED door will also open/close its paired door\n");
+            sb.append("# (only checks ONE neighbor and only syncs up to 2 doors total).\n");
+            sb.append("# doubleDoorSyncEnabled = true/false\n");
+            sb.append("\n");
             sb.append("# HUD feedback when locking / denied due to missing key.\n");
             sb.append("# hudMessagesEnabled   = true/false\n");
             sb.append("# hudMessageTicks      = how long to show HUD message (GUI frames, ~20 = 1 second)\n");
@@ -303,6 +344,7 @@ public final class LocksmithClientConfig {
             sb.append("[qol]\n");
             sb.append("autoCloseLockedDoors = ").append(DEFAULT_AUTO_CLOSE_ENABLED).append("\n");
             sb.append("autoCloseTicks = ").append(DEFAULT_AUTO_CLOSE_TICKS).append("\n");
+            sb.append("doubleDoorSyncEnabled = ").append(DEFAULT_DOUBLE_DOOR_SYNC_ENABLED).append("\n");
             sb.append("\n");
             sb.append("hudMessagesEnabled = ").append(DEFAULT_HUD_MESSAGES_ENABLED).append("\n");
             sb.append("hudMessageTicks = ").append(DEFAULT_HUD_MESSAGE_TICKS).append("\n");
