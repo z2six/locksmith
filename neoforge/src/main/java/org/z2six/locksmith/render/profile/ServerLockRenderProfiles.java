@@ -19,31 +19,20 @@ public final class ServerLockRenderProfiles {
 
     private static final Logger LOG = Constants.LOG;
 
-    // Cached copy; we always overwrite it when reloading.
-    private static Map<ResourceLocation, LockRenderProfile> CACHED = Collections.emptyMap();
+    private static volatile Map<ResourceLocation, LockRenderProfile> CACHED = Collections.emptyMap();
+    private static volatile boolean LOADED = false;
 
     private ServerLockRenderProfiles() {
     }
 
     /**
-     * Load from disk and return a map suitable for network sync.
+     * Returns a map suitable for network sync.
      * Called on player login (and whenever else you want to resync).
      */
     public static Map<ResourceLocation, LockRenderProfile> getProfilesForNetwork() {
         try {
-            Map<ResourceLocation, LockRenderProfile> loaded = LockRenderProfilesLoader.loadFromDisk();
-            if (loaded == null) {
-                loaded = Collections.emptyMap();
-            }
-
-            // Store a defensive copy for potential future use.
-            CACHED = new Object2ObjectOpenHashMap<>(loaded);
-
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("[Locksmith][ServerLockRenderProfiles] Loaded {} profile entries for network.", loaded.size());
-            }
-
-            return loaded;
+            ensureLoaded(false);
+            return CACHED != null ? CACHED : Collections.emptyMap();
         } catch (Throwable t) {
             LOG.error("[Locksmith][ServerLockRenderProfiles] getProfilesForNetwork failed (non-fatal). Returning last cached map.", t);
             return CACHED != null ? CACHED : Collections.emptyMap();
@@ -51,9 +40,46 @@ public final class ServerLockRenderProfiles {
     }
 
     /**
+     * Forces a disk reload (used at startup or if you add a /reload hook later).
+     */
+    public static void reloadFromDisk() {
+        ensureLoaded(true);
+    }
+
+    /**
      * Optional accessor if you ever want to query server-side placement logic.
      */
     public static Map<ResourceLocation, LockRenderProfile> getCachedProfiles() {
+        ensureLoaded(false);
         return CACHED != null ? Collections.unmodifiableMap(CACHED) : Collections.emptyMap();
+    }
+
+    private static void ensureLoaded(boolean force) {
+        try {
+            if (!force && LOADED) {
+                return;
+            }
+
+            synchronized (ServerLockRenderProfiles.class) {
+                // Double-check inside lock.
+                if (!force && LOADED) {
+                    return;
+                }
+
+                Map<ResourceLocation, LockRenderProfile> loaded = LockRenderProfilesLoader.loadFromDisk();
+                if (loaded == null) loaded = Collections.emptyMap();
+
+                CACHED = new Object2ObjectOpenHashMap<>(loaded);
+                LOADED = true;
+
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][ServerLockRenderProfiles] Loaded {} profile entries (force={}).",
+                            loaded.size(), force);
+                }
+            }
+        } catch (Throwable t) {
+            // Don't flip LOADED on failure; keep existing cache.
+            LOG.error("[Locksmith][ServerLockRenderProfiles] ensureLoaded failed (non-fatal). Using cached map.", t);
+        }
     }
 }

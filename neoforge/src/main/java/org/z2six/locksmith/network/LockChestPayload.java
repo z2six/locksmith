@@ -148,15 +148,8 @@ public record LockChestPayload(long chestPosLong) implements CustomPacketPayload
         try {
             if (blockId == null) return false;
 
-            // Prefer cached; if empty, load once via getProfilesForNetwork().
             var cached = ServerLockRenderProfiles.getCachedProfiles();
             LockRenderProfile prof = cached.get(blockId);
-            if (prof == null) {
-                var loaded = ServerLockRenderProfiles.getProfilesForNetwork();
-                if (loaded != null) {
-                    prof = loaded.get(blockId);
-                }
-            }
 
             return prof != null && prof.isValid() && prof.type == LockTargetType.CHEST;
         } catch (Throwable t) {

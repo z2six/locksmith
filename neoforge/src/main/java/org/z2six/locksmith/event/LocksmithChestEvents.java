@@ -93,15 +93,12 @@ public final class LocksmithChestEvents {
             } catch (Throwable ignored) {
             }
 
-            boolean isChestTypeClient = isChestTypeConfiguredClient(blockId);
-            boolean isChestTypeServer = isChestTypeConfiguredServer(blockId);
-
             if (level.isClientSide) {
-                if (!isChestTypeClient) {
+                if (!isChestTypeConfiguredClient(blockId)) {
                     return;
                 }
             } else {
-                if (!isChestTypeServer) {
+                if (!isChestTypeConfiguredServer(blockId)) {
                     return;
                 }
             }
@@ -380,12 +377,6 @@ public final class LocksmithChestEvents {
 
             var cached = org.z2six.locksmith.render.profile.ServerLockRenderProfiles.getCachedProfiles();
             LockRenderProfile prof = cached.get(blockId);
-            if (prof == null) {
-                var loaded = org.z2six.locksmith.render.profile.ServerLockRenderProfiles.getProfilesForNetwork();
-                if (loaded != null) {
-                    prof = loaded.get(blockId);
-                }
-            }
 
             return prof != null && prof.isValid() && prof.type == LockTargetType.CHEST;
         } catch (Throwable t) {

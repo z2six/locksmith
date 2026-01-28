@@ -19,6 +19,7 @@ import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
 import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.registry.ModRecipeSerializers;
+import org.z2six.locksmith.render.profile.ServerLockRenderProfiles;
 
 @Mod(Constants.MOD_ID)
 public class Locksmith {
@@ -30,6 +31,7 @@ public class Locksmith {
 
         try {
             LockProfileConfig.ensureDefaultFileExists();
+            ServerLockRenderProfiles.reloadFromDisk();
             LOG.info("[Locksmith] Ensured lock profile config exists at startup.");
         } catch (Throwable t) {
             LOG.error("[Locksmith] FAILED to ensure lock profile config exists at startup (non-fatal).", t);
