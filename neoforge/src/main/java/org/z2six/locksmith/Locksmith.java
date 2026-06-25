@@ -9,17 +9,18 @@ import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
 import org.z2six.locksmith.client.ClientModBusEvents;
-import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.config.LocksmithClientConfig;
+import org.z2six.locksmith.command.LocksmithCommands;
 import org.z2six.locksmith.event.LocksmithChestEvents;
 import org.z2six.locksmith.event.LocksmithCuriosEvents;
 import org.z2six.locksmith.event.LocksmithDoorEvents;
+import org.z2six.locksmith.event.LocksmithGenericEvents;
 import org.z2six.locksmith.event.LocksmithProfileSyncEvents;
 import org.z2six.locksmith.network.LocksmithPayloads;
 import org.z2six.locksmith.registry.ModCreativeTabs;
 import org.z2six.locksmith.registry.ModItems;
 import org.z2six.locksmith.registry.ModRecipeSerializers;
-import org.z2six.locksmith.render.profile.ServerLockRenderProfiles;
+import org.z2six.locksmith.render.profile.LockableBlockProfileService;
 
 @Mod(Constants.MOD_ID)
 public class Locksmith {
@@ -30,11 +31,10 @@ public class Locksmith {
         CommonClass.init();
 
         try {
-            LockProfileConfig.ensureDefaultFileExists();
-            ServerLockRenderProfiles.reloadFromDisk();
-            LOG.info("[Locksmith] Ensured lock profile config exists at startup.");
+            LockableBlockProfileService.reloadFromDisk();
+            LOG.info("[Locksmith] Loaded lockable block profile service at startup.");
         } catch (Throwable t) {
-            LOG.error("[Locksmith] FAILED to ensure lock profile config exists at startup (non-fatal).", t);
+            LOG.error("[Locksmith] FAILED to load lockable block profile service at startup (non-fatal).", t);
         }
 
         try {
@@ -79,6 +79,13 @@ public class Locksmith {
         }
 
         try {
+            NeoForge.EVENT_BUS.addListener(LocksmithCommands::onRegisterCommands);
+            LOG.info("[Locksmith] Registered command listener.");
+        } catch (Throwable t) {
+            LOG.error("[Locksmith] FAILED to register command listener (non-fatal).", t);
+        }
+
+        try {
             // Doors
             NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithDoorEvents::onRightClickBlock);
             NeoForge.EVENT_BUS.addListener(LocksmithDoorEvents::onPlayerLoggedIn);
@@ -92,10 +99,16 @@ public class Locksmith {
             NeoForge.EVENT_BUS.addListener(LocksmithChestEvents::onBlockBreak);
             NeoForge.EVENT_BUS.addListener(LocksmithChestEvents::onExplosionDetonate);
 
+            // Generic single-block interactables
+            NeoForge.EVENT_BUS.addListener(EventPriority.HIGHEST, LocksmithGenericEvents::onRightClickBlock);
+            NeoForge.EVENT_BUS.addListener(LocksmithGenericEvents::onPlayerLoggedIn);
+            NeoForge.EVENT_BUS.addListener(LocksmithGenericEvents::onBlockBreak);
+            NeoForge.EVENT_BUS.addListener(LocksmithGenericEvents::onExplosionDetonate);
+
             // Profiles -> client cache (used for both render + type gating client-side)
             NeoForge.EVENT_BUS.addListener(LocksmithProfileSyncEvents::onPlayerLoggedIn);
 
-            LOG.info("[Locksmith] Registered door + chest lock gameplay events (and cleanup hooks).");
+            LOG.info("[Locksmith] Registered door + chest + generic lock gameplay events (and cleanup hooks).");
         } catch (Throwable t) {
             LOG.error("[Locksmith] FAILED to register gameplay events (this is bad).", t);
         }

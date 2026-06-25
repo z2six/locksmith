@@ -98,6 +98,43 @@ public final class DoorLockManager {
         }
     }
 
+    public static String getRegisteredKeyHashAnywhere(Player player) {
+        try {
+            ItemStack stack = findRegisteredKeyAnywhere(player);
+            if (stack == null || stack.isEmpty()) return "";
+            return IronKeyItem.getHashOrEmpty(stack);
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockManager] getRegisteredKeyHashAnywhere failed (non-fatal).", t);
+            return "";
+        }
+    }
+
+    public static boolean hasRegisteredKeyAnywhere(Player player) {
+        return !getRegisteredKeyHashAnywhere(player).isBlank();
+    }
+
+    public static ItemStack findRegisteredKeyAnywhere(Player player) {
+        try {
+            if (player == null) return ItemStack.EMPTY;
+
+            for (ItemStack s : player.getInventory().items) {
+                if (stackIsRegisteredKey(s)) return s;
+            }
+            for (ItemStack s : player.getInventory().offhand) {
+                if (stackIsRegisteredKey(s)) return s;
+            }
+            for (ItemStack s : player.getInventory().armor) {
+                if (stackIsRegisteredKey(s)) return s;
+            }
+
+            ItemStack curios = findRegisteredKeyInCuriosKeySlot(player);
+            return curios == null ? ItemStack.EMPTY : curios;
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][DoorLockManager] findRegisteredKeyAnywhere failed (non-fatal).", t);
+            return ItemStack.EMPTY;
+        }
+    }
+
     private static boolean stackMatchesHash(ItemStack stack, String requiredHash) {
         try {
             if (stack == null || stack.isEmpty()) return false;
@@ -107,6 +144,18 @@ public final class DoorLockManager {
             return requiredHash.equals(h);
         } catch (Throwable t) {
             LOG.warn("[Locksmith][DoorLockManager] stackMatchesHash failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    private static boolean stackIsRegisteredKey(ItemStack stack) {
+        try {
+            return stack != null
+                    && !stack.isEmpty()
+                    && stack.is(ModItems.KEY_IRON.get())
+                    && IronKeyItem.isRegistered(stack);
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][DoorLockManager] stackIsRegisteredKey failed (non-fatal).", t);
             return false;
         }
     }
@@ -322,6 +371,42 @@ public final class DoorLockManager {
         } catch (Throwable t) {
             LOG.debug("[Locksmith][DoorLockManager] hasMatchingKeyInCuriosKeySlot failed (non-fatal).", t);
             return false;
+        }
+    }
+
+    private static ItemStack findRegisteredKeyInCuriosKeySlot(Player player) {
+        try {
+            if (player == null) return ItemStack.EMPTY;
+
+            boolean curiosLoaded;
+            try {
+                curiosLoaded = ModList.get().isLoaded("curios");
+            } catch (Throwable t) {
+                curiosLoaded = false;
+            }
+            if (!curiosLoaded) return ItemStack.EMPTY;
+
+            Optional<Object> dynamicOpt = getCuriosDynamicHandler(player, "key");
+            if (dynamicOpt.isEmpty()) return ItemStack.EMPTY;
+
+            Object dynamic = dynamicOpt.get();
+            if (dynamic == null) return ItemStack.EMPTY;
+
+            Method getSlots = dynamic.getClass().getMethod("getSlots");
+            int slots = (int) getSlots.invoke(dynamic);
+            if (slots <= 0) return ItemStack.EMPTY;
+
+            Method getStackInSlot = dynamic.getClass().getMethod("getStackInSlot", int.class);
+            for (int i = 0; i < slots; i++) {
+                Object stackObj = getStackInSlot.invoke(dynamic, i);
+                if (stackObj instanceof ItemStack stack && stackIsRegisteredKey(stack)) {
+                    return stack;
+                }
+            }
+            return ItemStack.EMPTY;
+        } catch (Throwable t) {
+            LOG.debug("[Locksmith][DoorLockManager] findRegisteredKeyInCuriosKeySlot failed (non-fatal).", t);
+            return ItemStack.EMPTY;
         }
     }
 

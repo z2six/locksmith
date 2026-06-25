@@ -1,7 +1,6 @@
 // MainFile: neoforge/src/main/java/org/z2six/locksmith/render/profile/ServerLockRenderProfiles.java
 package org.z2six.locksmith.render.profile;
 
-import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
@@ -19,9 +18,6 @@ public final class ServerLockRenderProfiles {
 
     private static final Logger LOG = Constants.LOG;
 
-    private static volatile Map<ResourceLocation, LockRenderProfile> CACHED = Collections.emptyMap();
-    private static volatile boolean LOADED = false;
-
     private ServerLockRenderProfiles() {
     }
 
@@ -31,11 +27,10 @@ public final class ServerLockRenderProfiles {
      */
     public static Map<ResourceLocation, LockRenderProfile> getProfilesForNetwork() {
         try {
-            ensureLoaded(false);
-            return CACHED != null ? CACHED : Collections.emptyMap();
+            return LockableBlockProfileService.getProfilesForNetwork();
         } catch (Throwable t) {
-            LOG.error("[Locksmith][ServerLockRenderProfiles] getProfilesForNetwork failed (non-fatal). Returning last cached map.", t);
-            return CACHED != null ? CACHED : Collections.emptyMap();
+            LOG.error("[Locksmith][ServerLockRenderProfiles] getProfilesForNetwork failed (non-fatal).", t);
+            return Collections.emptyMap();
         }
     }
 
@@ -43,43 +38,18 @@ public final class ServerLockRenderProfiles {
      * Forces a disk reload (used at startup or if you add a /reload hook later).
      */
     public static void reloadFromDisk() {
-        ensureLoaded(true);
+        LockableBlockProfileService.reloadFromDisk();
     }
 
     /**
      * Optional accessor if you ever want to query server-side placement logic.
      */
     public static Map<ResourceLocation, LockRenderProfile> getCachedProfiles() {
-        ensureLoaded(false);
-        return CACHED != null ? Collections.unmodifiableMap(CACHED) : Collections.emptyMap();
-    }
-
-    private static void ensureLoaded(boolean force) {
         try {
-            if (!force && LOADED) {
-                return;
-            }
-
-            synchronized (ServerLockRenderProfiles.class) {
-                // Double-check inside lock.
-                if (!force && LOADED) {
-                    return;
-                }
-
-                Map<ResourceLocation, LockRenderProfile> loaded = LockRenderProfilesLoader.loadFromDisk();
-                if (loaded == null) loaded = Collections.emptyMap();
-
-                CACHED = new Object2ObjectOpenHashMap<>(loaded);
-                LOADED = true;
-
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("[Locksmith][ServerLockRenderProfiles] Loaded {} profile entries (force={}).",
-                            loaded.size(), force);
-                }
-            }
+            return LockableBlockProfileService.getCachedProfiles();
         } catch (Throwable t) {
-            // Don't flip LOADED on failure; keep existing cache.
-            LOG.error("[Locksmith][ServerLockRenderProfiles] ensureLoaded failed (non-fatal). Using cached map.", t);
+            LOG.error("[Locksmith][ServerLockRenderProfiles] getCachedProfiles failed (non-fatal).", t);
+            return Collections.emptyMap();
         }
     }
 }

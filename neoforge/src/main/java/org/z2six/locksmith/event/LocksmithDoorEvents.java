@@ -4,7 +4,9 @@ package org.z2six.locksmith.event;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,7 +26,6 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
-import org.z2six.locksmith.config.LockProfileConfig;
 import org.z2six.locksmith.config.LocksmithClientConfig;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.DoorLockManager;
@@ -34,6 +35,10 @@ import org.z2six.locksmith.network.RemoveDoorLockPayload;
 import org.z2six.locksmith.network.SyncDoorLocksPayload;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
+import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
+import org.z2six.locksmith.render.profile.LockableBlockProfileService;
+import org.z2six.locksmith.render.profile.LockRenderProfile;
+import org.z2six.locksmith.render.profile.LockTargetType;
 import org.z2six.locksmith.world.DoorLockSavedData;
 
 import java.util.HashMap;
@@ -59,8 +64,6 @@ public final class LocksmithDoorEvents {
 
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         try {
-            LockProfileConfig.ensureDefaultFileExists();
-
             if (!(event.getEntity() instanceof ServerPlayer sp)) return;
             ServerLevel level = sp.serverLevel();
 
@@ -94,6 +97,22 @@ public final class LocksmithDoorEvents {
                 return;
             }
 
+            ResourceLocation clickedBlockId = null;
+            try {
+                clickedBlockId = BuiltInRegistries.BLOCK.getKey(clickedState.getBlock());
+            } catch (Throwable ignored) {
+            }
+
+            if (level.isClientSide) {
+                if (!isDoorTypeConfiguredClient(clickedBlockId)) {
+                    return;
+                }
+            } else {
+                if (!LockableBlockProfileService.isLockableDoor(clickedBlockId)) {
+                    return;
+                }
+            }
+
             BlockPos doorPos = DoorLockManager.normalizeDoorPos(level, clickedPos, clickedState);
             BlockState doorState = level.getBlockState(doorPos);
             if (!(doorState.getBlock() instanceof DoorBlock)) {
@@ -104,6 +123,10 @@ public final class LocksmithDoorEvents {
             // CLIENT-SIDE PREDICTION
             // =========================
             if (level.isClientSide) {
+                if (event.getHand() == InteractionHand.MAIN_HAND && player.isShiftKeyDown()) {
+                    return;
+                }
+
                 long doorLong = doorPos.asLong();
 
                 ClientDoorOpenBlocker.cleanupExpired(level.getGameTime(), 64);
@@ -572,6 +595,17 @@ public final class LocksmithDoorEvents {
 
         } catch (Throwable t) {
             LOG.warn("[Locksmith] sendDeniedMessageThrottled failed (non-fatal).", t);
+        }
+    }
+
+    private static boolean isDoorTypeConfiguredClient(ResourceLocation blockId) {
+        try {
+            if (blockId == null) return false;
+            LockRenderProfile prof = ClientLockRenderProfiles.get(blockId);
+            return prof != null && prof.isValid() && prof.type == LockTargetType.DOOR;
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][LocksmithDoorEvents] isDoorTypeConfiguredClient failed (non-fatal). blockId={}", blockId, t);
+            return false;
         }
     }
 }

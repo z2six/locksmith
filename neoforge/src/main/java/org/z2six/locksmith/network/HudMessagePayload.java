@@ -27,6 +27,8 @@ public record HudMessagePayload(byte typeId) implements CustomPacketPayload {
     public static final byte CHEST_LOCKED_NO_KEY = 2;
     public static final byte DOOR_LOCK_SUCCESS = 3;
     public static final byte CHEST_LOCK_SUCCESS = 4;
+    public static final byte GENERIC_LOCKED_NO_KEY = 5;
+    public static final byte GENERIC_LOCK_SUCCESS = 6;
 
     @Override
     public Type<? extends CustomPacketPayload> type() {
@@ -58,6 +60,8 @@ public record HudMessagePayload(byte typeId) implements CustomPacketPayload {
                 case CHEST_LOCKED_NO_KEY -> org.z2six.locksmith.client.ClientHudMessages.showChestLockedNoKey();
                 case DOOR_LOCK_SUCCESS -> org.z2six.locksmith.client.ClientHudMessages.showDoorLockSuccess();
                 case CHEST_LOCK_SUCCESS -> org.z2six.locksmith.client.ClientHudMessages.showChestLockSuccess();
+                case GENERIC_LOCKED_NO_KEY -> org.z2six.locksmith.client.ClientHudMessages.showGenericLockedNoKey();
+                case GENERIC_LOCK_SUCCESS -> org.z2six.locksmith.client.ClientHudMessages.showGenericLockSuccess();
                 default -> {
                     if (LOG.isDebugEnabled()) {
                         LOG.debug("[Locksmith][HudMessagePayload] Unknown typeId={} (ignored).", t);

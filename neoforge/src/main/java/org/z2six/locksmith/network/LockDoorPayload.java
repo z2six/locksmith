@@ -2,6 +2,7 @@
 package org.z2six.locksmith.network;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -18,6 +19,7 @@ import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.DoorLockManager;
+import org.z2six.locksmith.render.profile.LockableBlockProfileService;
 import org.z2six.locksmith.world.DoorLockSavedData;
 
 public record LockDoorPayload(long doorPosLong) implements CustomPacketPayload {
@@ -64,6 +66,19 @@ public record LockDoorPayload(long doorPosLong) implements CustomPacketPayload {
             if (!(state.getBlock() instanceof DoorBlock)) {
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("[Locksmith][LockDoorPayload] Target not a door: {} state={}", pos, state.getBlock());
+                }
+                return;
+            }
+
+            ResourceLocation blockId = null;
+            try {
+                blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+            } catch (Throwable ignored) {
+            }
+
+            if (!LockableBlockProfileService.isLockableDoor(blockId)) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[Locksmith][LockDoorPayload] Denied lock: blockId={} not configured as DOOR.", blockId);
                 }
                 return;
             }

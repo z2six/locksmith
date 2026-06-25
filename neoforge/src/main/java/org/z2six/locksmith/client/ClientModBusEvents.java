@@ -36,6 +36,7 @@ public final class ClientModBusEvents {
                 return;
             }
             modBus.addListener(ClientModBusEvents::onClientSetup);
+            modBus.addListener(ClientKeyMappings::onRegisterKeyMappings);
             LOG.info("[Locksmith][ClientModBusEvents] Registered onClientSetup listener.");
         } catch (Throwable t) {
             LOG.error("[Locksmith][ClientModBusEvents] register failed (non-fatal).", t);
@@ -50,6 +51,7 @@ public final class ClientModBusEvents {
             // Install a one-time sanity check hook on the global NeoForge bus.
             // This proves beyond doubt that client-side event handling is alive.
             NeoForge.EVENT_BUS.addListener(ClientModBusEvents::onClientRightClickSanity);
+            NeoForge.EVENT_BUS.addListener(ClientKeyMappings::onClientTickPost);
 
             LOG.info("[Locksmith][ClientModBusEvents] Client setup complete; sanity hook registered.");
         } catch (Throwable t) {

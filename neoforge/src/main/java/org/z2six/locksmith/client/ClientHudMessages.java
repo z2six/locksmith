@@ -43,12 +43,32 @@ public final class ClientHudMessages {
         showLockedNoKey(makeTargetChest(), makeLockedWordDenied());
     }
 
+    public static void showGenericLockedNoKey() {
+        showLockedNoKey(makeTargetBlock(), makeLockedWordDenied());
+    }
+
     public static void showDoorLockSuccess() {
         showLockSuccess(makeTargetDoor(), makeLockedWordSuccess());
     }
 
     public static void showChestLockSuccess() {
         showLockSuccess(makeTargetChest(), makeLockedWordSuccess());
+    }
+
+    public static void showGenericLockSuccess() {
+        showLockSuccess(makeTargetBlock(), makeLockedWordSuccess());
+    }
+
+    public static void showSneakLockingToggle(boolean enabled) {
+        try {
+            if (!isEnabled()) return;
+            Component state = Component.translatable(enabled
+                    ? "message.locksmith.word.enabled"
+                    : "message.locksmith.word.disabled").withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.RED);
+            pushVanillaOverlay(Component.translatable("message.locksmith.sneak_locking_toggle_fmt", state));
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][ClientHudMessages] showSneakLockingToggle failed (non-fatal).", t);
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -62,6 +82,10 @@ public final class ClientHudMessages {
 
     private static Component makeTargetChest() {
         return Component.translatable("message.locksmith.target.chest").withStyle(ChatFormatting.AQUA);
+    }
+
+    private static Component makeTargetBlock() {
+        return Component.translatable("message.locksmith.target.block").withStyle(ChatFormatting.AQUA);
     }
 
     private static Component makeLockedWordDenied() {

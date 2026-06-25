@@ -23,18 +23,23 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.z2six.locksmith.client.ClientHudMessages;
+import org.z2six.locksmith.client.ClientKeyMappings;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.ChestLockManager;
 import org.z2six.locksmith.lock.DoorLockManager;
 import org.z2six.locksmith.network.LockChestPayload;
 import org.z2six.locksmith.network.LockDoorPayload;
+import org.z2six.locksmith.network.ToggleLockPayload;
 import org.z2six.locksmith.render.ClientChestLockState;
 import org.z2six.locksmith.render.ClientChestOpenBlocker;
 import org.z2six.locksmith.render.ClientDoorLockState;
 import org.z2six.locksmith.render.ClientDoorOpenBlocker;
+import org.z2six.locksmith.render.ClientGenericLockPulse;
+import org.z2six.locksmith.render.ClientGenericLockState;
 import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
 import org.z2six.locksmith.render.profile.LockRenderProfile;
 import org.z2six.locksmith.render.profile.LockTargetType;
+import org.z2six.locksmith.network.LockGenericPayload;
 
 @Mixin(MultiPlayerGameMode.class)
 public class MixinMultiPlayerGameMode {
@@ -50,6 +55,9 @@ public class MixinMultiPlayerGameMode {
 
     @Unique
     private static volatile long LOCKSMITH$LAST_DENY_CHEST_TICK = -999999L;
+
+    @Unique
+    private static volatile long LOCKSMITH$LAST_DENY_GENERIC_TICK = -999999L;
 
     @Unique
     private static volatile long LOCKSMITH$LAST_SUCCESS_DOOR_TICK = -999999L;
@@ -88,8 +96,24 @@ public class MixinMultiPlayerGameMode {
 
             if (clickedState == null || clickedState.isAir()) return;
 
+            if (player.isShiftKeyDown()
+                    && ClientKeyMappings.isSneakLockingEnabled()
+                    && locksmith$handleSneakToggle(player, level, clickedPos, clickedState, cir)) {
+                return;
+            }
+
             // DOOR path --------------------------------------------------------------------
             if (clickedState.getBlock() instanceof DoorBlock) {
+                ResourceLocation blockId = null;
+                try {
+                    blockId = BuiltInRegistries.BLOCK.getKey(clickedState.getBlock());
+                } catch (Throwable ignored) {
+                }
+                LockRenderProfile doorProfile = blockId == null ? null : ClientLockRenderProfiles.get(blockId);
+                if (doorProfile == null || !doorProfile.isValid() || doorProfile.type != LockTargetType.DOOR) {
+                    return;
+                }
+
                 BlockPos doorPos = DoorLockManager.normalizeDoorPos(level, clickedPos, clickedState);
                 long doorLong = doorPos.asLong();
 
@@ -158,9 +182,52 @@ public class MixinMultiPlayerGameMode {
             } catch (Throwable ignored) {
             }
 
-            // Client-side gating: only configured "type=chest" blocks.
             LockRenderProfile prof = (blockId == null) ? null : ClientLockRenderProfiles.get(blockId);
-            if (prof == null || !prof.isValid() || prof.type != LockTargetType.CHEST) {
+            if (prof == null || !prof.isValid()) {
+                return;
+            }
+
+            if (prof.type == LockTargetType.GENERIC) {
+                long genericLong = clickedPos.asLong();
+
+                if (ClientGenericLockState.isLocked(genericLong)) {
+                    String requiredHash = ClientGenericLockState.getRequiredHash(genericLong);
+                    if (requiredHash != null && !requiredHash.isBlank()) {
+                        boolean hasKey = DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash);
+                        if (!hasKey) {
+                            cir.setReturnValue(InteractionResult.FAIL);
+                            locksmith$maybeShowGenericDenied(level);
+                            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Denied locked generic predicted-use (no key). pos={}", clickedPos);
+                            }
+                            return;
+                        }
+                    }
+                    ClientGenericLockPulse.trigger(genericLong, level.getGameTime());
+                    return;
+                }
+
+                ItemStack held = player.getMainHandItem();
+                if (held == null || held.isEmpty()) return;
+                if (!(held.getItem() instanceof IronKeyItem)) return;
+                if (!IronKeyItem.isRegistered(held)) return;
+
+                try {
+                    PacketDistributor.sendToServer(new LockGenericPayload(genericLong));
+                } catch (Throwable t) {
+                    LOCKSMITH$LOG.error("[Locksmith][MixinMultiPlayerGameMode] Failed to send LockGenericPayload (non-fatal). pos={}", clickedPos, t);
+                }
+
+                cir.setReturnValue(InteractionResult.SUCCESS);
+
+                if (LOCKSMITH$LOG.isInfoEnabled()) {
+                    String name = safeName(player);
+                    LOCKSMITH$LOG.info("[Locksmith] Ate predicted generic use to register lock (client). player={} pos={}", name, clickedPos);
+                }
+                return;
+            }
+
+            if (prof.type != LockTargetType.CHEST) {
                 return;
             }
 
@@ -226,6 +293,94 @@ public class MixinMultiPlayerGameMode {
     // ------------------------------------------------------------------------
 
     @Unique
+    private static boolean locksmith$handleSneakToggle(
+            LocalPlayer player,
+            Level level,
+            BlockPos clickedPos,
+            BlockState clickedState,
+            CallbackInfoReturnable<InteractionResult> cir
+    ) {
+        try {
+            if (player == null || level == null || clickedPos == null || clickedState == null) return false;
+
+            ResourceLocation blockId = null;
+            try {
+                blockId = BuiltInRegistries.BLOCK.getKey(clickedState.getBlock());
+            } catch (Throwable ignored) {
+            }
+
+            long clientLockLong = clickedPos.asLong();
+            byte deniedKind = 0;
+            boolean configured = false;
+
+            if (clickedState.getBlock() instanceof DoorBlock) {
+                LockRenderProfile doorProfile = blockId == null ? null : ClientLockRenderProfiles.get(blockId);
+                if (doorProfile == null || !doorProfile.isValid() || doorProfile.type != LockTargetType.DOOR) {
+                    return false;
+                }
+                configured = true;
+                clientLockLong = DoorLockManager.normalizeDoorPos(level, clickedPos, clickedState).asLong();
+                deniedKind = 1;
+            } else {
+                LockRenderProfile profile = blockId == null ? null : ClientLockRenderProfiles.get(blockId);
+                if (profile == null || !profile.isValid()) {
+                    return false;
+                }
+                if (profile.type == LockTargetType.CHEST) {
+                    configured = true;
+                    clientLockLong = ChestLockManager.normalizeChestPos(level, clickedPos, clickedState).asLong();
+                    deniedKind = 2;
+                } else if (profile.type == LockTargetType.GENERIC) {
+                    configured = true;
+                    clientLockLong = clickedPos.asLong();
+                    deniedKind = 3;
+                } else {
+                    return false;
+                }
+            }
+
+            if (!configured) return false;
+
+            boolean locked = switch (deniedKind) {
+                case 1 -> ClientDoorLockState.isLocked(clientLockLong);
+                case 2 -> ClientChestLockState.isLocked(clientLockLong);
+                case 3 -> ClientGenericLockState.isLocked(clientLockLong);
+                default -> false;
+            };
+
+            if (locked) {
+                String requiredHash = switch (deniedKind) {
+                    case 1 -> ClientDoorLockState.getRequiredHash(clientLockLong);
+                    case 2 -> ClientChestLockState.getRequiredHash(clientLockLong);
+                    case 3 -> ClientGenericLockState.getRequiredHash(clientLockLong);
+                    default -> "";
+                };
+                if (!DoorLockManager.hasMatchingKeyAnywhere(player, requiredHash)) {
+                    cir.setReturnValue(InteractionResult.FAIL);
+                    if (deniedKind == 1) locksmith$maybeShowDoorDenied(level);
+                    else if (deniedKind == 2) locksmith$maybeShowChestDenied(level);
+                    else locksmith$maybeShowGenericDenied(level);
+                    return true;
+                }
+            } else if (!DoorLockManager.hasRegisteredKeyAnywhere(player)) {
+                return false;
+            }
+
+            try {
+                PacketDistributor.sendToServer(new ToggleLockPayload(clickedPos.asLong()));
+            } catch (Throwable t) {
+                LOCKSMITH$LOG.error("[Locksmith][MixinMultiPlayerGameMode] Failed to send ToggleLockPayload (non-fatal). pos={}", clickedPos, t);
+            }
+
+            cir.setReturnValue(InteractionResult.SUCCESS);
+            return true;
+        } catch (Throwable t) {
+            LOCKSMITH$LOG.error("[Locksmith][MixinMultiPlayerGameMode] sneak-toggle intercept failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    @Unique
     private static void locksmith$maybeShowDoorDenied(Level level) {
         try {
             if (level == null) return;
@@ -258,6 +413,24 @@ public class MixinMultiPlayerGameMode {
             }
         } catch (Throwable t) {
             LOCKSMITH$LOG.warn("[Locksmith][MixinMultiPlayerGameMode] locksmith$maybeShowChestDenied failed (non-fatal).", t);
+        }
+    }
+
+    @Unique
+    private static void locksmith$maybeShowGenericDenied(Level level) {
+        try {
+            if (level == null) return;
+            long now = level.getGameTime();
+            if (now - LOCKSMITH$LAST_DENY_GENERIC_TICK < LOCKSMITH$MSG_THROTTLE_TICKS) return;
+            LOCKSMITH$LAST_DENY_GENERIC_TICK = now;
+
+            ClientHudMessages.showGenericLockedNoKey();
+
+            if (LOCKSMITH$LOG.isInfoEnabled()) {
+                LOCKSMITH$LOG.info("[Locksmith][MixinMultiPlayerGameMode] Triggered HUD deny message (generic_locked_no_key). tick={}", now);
+            }
+        } catch (Throwable t) {
+            LOCKSMITH$LOG.warn("[Locksmith][MixinMultiPlayerGameMode] locksmith$maybeShowGenericDenied failed (non-fatal).", t);
         }
     }
 

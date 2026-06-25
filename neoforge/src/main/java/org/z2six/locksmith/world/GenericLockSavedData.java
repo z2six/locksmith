@@ -1,0 +1,155 @@
+// MainFile: neoforge/src/main/java/org/z2six/locksmith/world/GenericLockSavedData.java
+package org.z2six.locksmith.world;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.saveddata.SavedData;
+import org.slf4j.Logger;
+import org.z2six.locksmith.Constants;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.BiFunction;
+import java.util.function.Supplier;
+
+public class GenericLockSavedData extends SavedData {
+    private static final Logger LOG = Constants.LOG;
+
+    private static final String NAME = "locksmith_generic_locks";
+    private static final String TAG_LOCKS = "Locks";
+    private static final String TAG_POS = "Pos";
+    private static final String TAG_HASH = "Hash";
+
+    private final Long2ObjectOpenHashMap<String> locks = new Long2ObjectOpenHashMap<>();
+
+    public static GenericLockSavedData get(ServerLevel level) {
+        try {
+            Supplier<GenericLockSavedData> constructor = GenericLockSavedData::new;
+            BiFunction<CompoundTag, HolderLookup.Provider, GenericLockSavedData> loader = GenericLockSavedData::load;
+            SavedData.Factory<GenericLockSavedData> factory = new SavedData.Factory<>(constructor, loader);
+            return level.getDataStorage().computeIfAbsent(factory, NAME);
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][GenericLockSavedData] Failed to get SavedData.", t);
+            return new GenericLockSavedData();
+        }
+    }
+
+    public static GenericLockSavedData load(CompoundTag tag, HolderLookup.Provider provider) {
+        GenericLockSavedData data = new GenericLockSavedData();
+        try {
+            if (tag == null) return data;
+            ListTag list = tag.getList(TAG_LOCKS, Tag.TAG_COMPOUND);
+            for (int i = 0; i < list.size(); i++) {
+                CompoundTag e = list.getCompound(i);
+                long pos = e.getLong(TAG_POS);
+                String hash = e.getString(TAG_HASH);
+                if (hash != null && !hash.isBlank()) {
+                    data.locks.put(pos, hash);
+                }
+            }
+            LOG.info("[Locksmith][GenericLockSavedData] Loaded {} generic lock(s).", data.locks.size());
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][GenericLockSavedData] load failed (non-fatal).", t);
+        }
+        return data;
+    }
+
+    @Override
+    public CompoundTag save(CompoundTag tag, HolderLookup.Provider provider) {
+        try {
+            ListTag list = new ListTag();
+            for (var en : locks.long2ObjectEntrySet()) {
+                String hash = en.getValue();
+                if (hash == null || hash.isBlank()) continue;
+                CompoundTag e = new CompoundTag();
+                e.putLong(TAG_POS, en.getLongKey());
+                e.putString(TAG_HASH, hash);
+                list.add(e);
+            }
+            tag.put(TAG_LOCKS, list);
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][GenericLockSavedData] save failed (non-fatal).", t);
+        }
+        return tag;
+    }
+
+    public boolean isLockedLong(long posLong) {
+        return locks.containsKey(posLong);
+    }
+
+    public String getHashLong(long posLong) {
+        String v = locks.get(posLong);
+        return v == null ? "" : v;
+    }
+
+    public boolean putLockLong(long posLong, String hash) {
+        try {
+            if (hash == null || hash.isBlank()) return false;
+            String prev = locks.putIfAbsent(posLong, hash);
+            if (prev == null) {
+                setDirty();
+                LOG.info("[Locksmith][GenericLockSavedData] Added generic lock at posLong={}", posLong);
+                return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][GenericLockSavedData] putLockLong failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    public boolean removeLockLong(long posLong) {
+        try {
+            String removed = locks.remove(posLong);
+            if (removed != null) {
+                setDirty();
+                LOG.info("[Locksmith][GenericLockSavedData] Removed generic lock at posLong={}", posLong);
+                return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][GenericLockSavedData] removeLockLong failed (non-fatal).", t);
+            return false;
+        }
+    }
+
+    public int cleanupInvalidBlocks(ServerLevel level, int maxToCheck) {
+        int removedCount = 0;
+        try {
+            if (level == null || locks.isEmpty()) return 0;
+            int checked = 0;
+            for (long posLong : locks.keySet().toLongArray()) {
+                if (maxToCheck > 0 && checked >= maxToCheck) break;
+                checked++;
+                BlockPos pos = BlockPos.of(posLong);
+                BlockState st = level.getBlockState(pos);
+                if (st == null || st.isAir()) {
+                    if (removeLockLong(posLong)) removedCount++;
+                }
+            }
+        } catch (Throwable t) {
+            LOG.error("[Locksmith][GenericLockSavedData] cleanupInvalidBlocks failed (non-fatal).", t);
+        }
+        return removedCount;
+    }
+
+    public Map<Long, String> snapshotLocks() {
+        try {
+            HashMap<Long, String> out = new HashMap<>();
+            for (var en : locks.long2ObjectEntrySet()) {
+                out.put(en.getLongKey(), en.getValue());
+            }
+            return Collections.unmodifiableMap(out);
+        } catch (Throwable t) {
+            LOG.warn("[Locksmith][GenericLockSavedData] snapshotLocks failed (non-fatal).", t);
+            return Collections.emptyMap();
+        }
+    }
+}

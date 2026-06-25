@@ -8,7 +8,14 @@
 
   "message.locksmith.target.door": "door",
   "message.locksmith.target.chest": "chest",
+  "message.locksmith.target.block": "block",
   "message.locksmith.word.locked": "locked",
+  "message.locksmith.word.enabled": "enabled",
+  "message.locksmith.word.disabled": "disabled",
   "message.locksmith.locked_no_key_fmt": "This %s is %s. You don't have the right key.",
-  "message.locksmith.lock_success_fmt": "%s %s."
+  "message.locksmith.lock_success_fmt": "%s %s.",
+  "message.locksmith.sneak_locking_toggle_fmt": "Sneak lock/remove-lock shortcut %s.",
+
+  "key.categories.locksmith": "Locksmith",
+  "key.locksmith.toggle_sneak_locking": "Toggle Sneak Lock Shortcut"
 }

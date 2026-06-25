@@ -30,6 +30,7 @@ import org.z2six.locksmith.network.SyncChestLocksPayload;
 import org.z2six.locksmith.render.ClientChestLockState;
 import org.z2six.locksmith.render.ClientChestOpenBlocker;
 import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
+import org.z2six.locksmith.render.profile.LockableBlockProfileService;
 import org.z2six.locksmith.render.profile.LockRenderProfile;
 import org.z2six.locksmith.render.profile.LockTargetType;
 import org.z2six.locksmith.world.ChestLockSavedData;
@@ -108,6 +109,10 @@ public final class LocksmithChestEvents {
 
             // ---------- CLIENT ----------
             if (level.isClientSide) {
+                if (event.getHand() == InteractionHand.MAIN_HAND && player.isShiftKeyDown()) {
+                    return;
+                }
+
                 ClientChestOpenBlocker.cleanupExpired(level.getGameTime(), 64);
 
                 if (!ClientChestLockState.isLocked(chestKeyLong)
@@ -375,10 +380,7 @@ public final class LocksmithChestEvents {
         try {
             if (blockId == null) return false;
 
-            var cached = org.z2six.locksmith.render.profile.ServerLockRenderProfiles.getCachedProfiles();
-            LockRenderProfile prof = cached.get(blockId);
-
-            return prof != null && prof.isValid() && prof.type == LockTargetType.CHEST;
+            return LockableBlockProfileService.isLockableChest(blockId);
         } catch (Throwable t) {
             LOG.warn("[Locksmith][LocksmithChestEvents] isChestTypeConfiguredServer failed (non-fatal). blockId={}", blockId, t);
             return false;

@@ -19,9 +19,7 @@ import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.item.IronKeyItem;
 import org.z2six.locksmith.lock.ChestLockManager;
 import org.z2six.locksmith.registry.ModItems;
-import org.z2six.locksmith.render.profile.LockRenderProfile;
-import org.z2six.locksmith.render.profile.LockTargetType;
-import org.z2six.locksmith.render.profile.ServerLockRenderProfiles;
+import org.z2six.locksmith.render.profile.LockableBlockProfileService;
 import org.z2six.locksmith.world.ChestLockSavedData;
 
 public record LockChestPayload(long chestPosLong) implements CustomPacketPayload {
@@ -148,10 +146,7 @@ public record LockChestPayload(long chestPosLong) implements CustomPacketPayload
         try {
             if (blockId == null) return false;
 
-            var cached = ServerLockRenderProfiles.getCachedProfiles();
-            LockRenderProfile prof = cached.get(blockId);
-
-            return prof != null && prof.isValid() && prof.type == LockTargetType.CHEST;
+            return LockableBlockProfileService.isLockableChest(blockId);
         } catch (Throwable t) {
             LOG.warn("[Locksmith][LockChestPayload] isChestTypeConfigured failed (non-fatal). blockId={}", blockId, t);
             return false;

@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.render.ClientChestLockState;
 import org.z2six.locksmith.render.ClientChestOpenBlocker;
+import org.z2six.locksmith.render.ClientGenericLockState;
 import org.z2six.locksmith.render.profile.ClientLockRenderProfiles;
 
 public final class ClientLifecycleEvents {
@@ -25,8 +26,9 @@ public final class ClientLifecycleEvents {
         try {
             ClientChestLockState.clear();
             ClientChestOpenBlocker.clear();
+            ClientGenericLockState.clear();
         } catch (Throwable t) {
-            LOG.warn("[Locksmith][ClientLifecycleEvents] onClientLoggedOut failed clearing chest client caches (non-fatal).", t);
+            LOG.warn("[Locksmith][ClientLifecycleEvents] onClientLoggedOut failed clearing lock client caches (non-fatal).", t);
         }
     }
 }

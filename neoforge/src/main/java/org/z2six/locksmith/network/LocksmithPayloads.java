@@ -32,12 +32,32 @@ public final class LocksmithPayloads {
                     LockChestPayload.STREAM_CODEC,
                     LockChestPayload::handle
             );
+            registrar.playToServer(
+                    LockGenericPayload.TYPE,
+                    LockGenericPayload.STREAM_CODEC,
+                    LockGenericPayload::handle
+            );
+            registrar.playToServer(
+                    ToggleLockPayload.TYPE,
+                    ToggleLockPayload.STREAM_CODEC,
+                    ToggleLockPayload::handle
+            );
 
             // NEW: C2S (Curios optional quick-equip)
             registrar.playToServer(
                     QuickEquipCuriosKeyPayload.TYPE,
                     QuickEquipCuriosKeyPayload.STREAM_CODEC,
                     QuickEquipCuriosKeyPayload::handle
+            );
+            registrar.playToServer(
+                    SaveLockableBlocksPayload.TYPE,
+                    SaveLockableBlocksPayload.STREAM_CODEC,
+                    SaveLockableBlocksPayload::handle
+            );
+            registrar.playToServer(
+                    ReloadLockableBlocksEditorPayload.TYPE,
+                    ReloadLockableBlocksEditorPayload.STREAM_CODEC,
+                    ReloadLockableBlocksEditorPayload::handle
             );
 
             // S2C (HUD feedback)
@@ -81,11 +101,43 @@ public final class LocksmithPayloads {
                     RemoveChestLockPayload::handle
             );
 
+            // S2C (generic single-block targets)
+            registrar.playToClient(
+                    SyncGenericLocksPayload.TYPE,
+                    SyncGenericLocksPayload.STREAM_CODEC,
+                    SyncGenericLocksPayload::handle
+            );
+            registrar.playToClient(
+                    AddGenericLockPayload.TYPE,
+                    AddGenericLockPayload.STREAM_CODEC,
+                    AddGenericLockPayload::handle
+            );
+            registrar.playToClient(
+                    RemoveGenericLockPayload.TYPE,
+                    RemoveGenericLockPayload.STREAM_CODEC,
+                    RemoveGenericLockPayload::handle
+            );
+            registrar.playToClient(
+                    PulseGenericLockPayload.TYPE,
+                    PulseGenericLockPayload.STREAM_CODEC,
+                    PulseGenericLockPayload::handle
+            );
+
             // Profiles
             registrar.playToClient(
                     SyncLockRenderProfilesPayload.TYPE,
                     SyncLockRenderProfilesPayload.STREAM_CODEC,
                     SyncLockRenderProfilesPayload::handle
+            );
+            registrar.playToClient(
+                    OpenLockableBlocksEditorPayload.TYPE,
+                    OpenLockableBlocksEditorPayload.STREAM_CODEC,
+                    OpenLockableBlocksEditorPayload::handle
+            );
+            registrar.playToClient(
+                    LockableBlocksEditorSaveResultPayload.TYPE,
+                    LockableBlocksEditorSaveResultPayload.STREAM_CODEC,
+                    LockableBlocksEditorSaveResultPayload::handle
             );
 
             LOG.info("[Locksmith] Registered payload handlers.");
