@@ -31,6 +31,11 @@ public final class LockableBlocksEditorState {
         replaceFromServer(entries, validation);
     }
 
+    public LockableBlocksEditorState(List<LockableBlockEntry> entries, List<LockableBlockValidationResult> validation, int selectedIndex) {
+        replaceFromServer(entries, validation);
+        select(selectedIndex);
+    }
+
     public List<LockableBlockEntry> workingEntries() {
         return new ArrayList<>(workingEntries);
     }
@@ -188,6 +193,26 @@ public final class LockableBlocksEditorState {
             case "hingeNudgeLeft" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft() + delta, t.hingeNudgeRight(), t.doubleNudgeX());
             case "hingeNudgeRight" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight() + delta, t.doubleNudgeX());
             case "doubleNudgeX" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX() + delta);
+            default -> t;
+        };
+        updateSelected(selected.withTransform(next.clamped()));
+    }
+
+    public void setTransformField(String field, double value) {
+        LockableBlockEntry selected = selectedEntry();
+        if (selected == null || Double.isNaN(value) || Double.isInfinite(value)) return;
+        LockTransform t = selected.transform();
+        LockTransform next = switch (field) {
+            case "offsetX" -> new LockTransform(value, t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "offsetY" -> new LockTransform(t.offsetX(), value, t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "offsetZ" -> new LockTransform(t.offsetX(), t.offsetY(), value, t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "rotX" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), (float) value, t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "rotY" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), (float) value, t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "rotZ" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), (float) value, t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "scale" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), (float) value, t.hingeNudgeLeft(), t.hingeNudgeRight(), t.doubleNudgeX());
+            case "hingeNudgeLeft" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), value, t.hingeNudgeRight(), t.doubleNudgeX());
+            case "hingeNudgeRight" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), value, t.doubleNudgeX());
+            case "doubleNudgeX" -> new LockTransform(t.offsetX(), t.offsetY(), t.offsetZ(), t.rotX(), t.rotY(), t.rotZ(), t.scale(), t.hingeNudgeLeft(), t.hingeNudgeRight(), value);
             default -> t;
         };
         updateSelected(selected.withTransform(next.clamped()));

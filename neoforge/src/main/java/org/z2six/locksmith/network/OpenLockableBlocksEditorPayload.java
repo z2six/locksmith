@@ -21,7 +21,8 @@ import java.util.List;
 
 public record OpenLockableBlocksEditorPayload(
         List<LockableBlockEntry> entries,
-        List<LockableBlockValidationResult> validationResults
+        List<LockableBlockValidationResult> validationResults,
+        int selectedIndex
 ) implements CustomPacketPayload {
     private static final Logger LOG = Constants.LOG;
 
@@ -33,9 +34,14 @@ public record OpenLockableBlocksEditorPayload(
                     (buf, msg) -> {
                         writeEntries(buf, msg == null ? List.of() : msg.entries);
                         writeValidationResults(buf, msg == null ? List.of() : msg.validationResults);
+                        buf.writeVarInt(msg == null ? 0 : msg.selectedIndex);
                     },
-                    buf -> new OpenLockableBlocksEditorPayload(readEntries(buf), readValidationResults(buf))
+                    buf -> new OpenLockableBlocksEditorPayload(readEntries(buf), readValidationResults(buf), buf.readVarInt())
             );
+
+    public OpenLockableBlocksEditorPayload(List<LockableBlockEntry> entries, List<LockableBlockValidationResult> validationResults) {
+        this(entries, validationResults, 0);
+    }
 
     @Override
     public Type<? extends CustomPacketPayload> type() {
@@ -55,10 +61,11 @@ public record OpenLockableBlocksEditorPayload(
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
             Object mc = mcClass.getMethod("getInstance").invoke(null);
             Class<?> screenClass = Class.forName("org.z2six.locksmith.client.screen.LockableBlocksEditorScreen");
-            Constructor<?> ctor = screenClass.getConstructor(List.class, List.class);
+            Constructor<?> ctor = screenClass.getConstructor(List.class, List.class, int.class);
             Object screen = ctor.newInstance(
                     msg == null ? List.of() : msg.entries,
-                    msg == null ? List.of() : msg.validationResults
+                    msg == null ? List.of() : msg.validationResults,
+                    msg == null ? 0 : msg.selectedIndex
             );
             Method setScreen = mcClass.getMethod("setScreen", Class.forName("net.minecraft.client.gui.screens.Screen"));
             setScreen.invoke(mc, screen);

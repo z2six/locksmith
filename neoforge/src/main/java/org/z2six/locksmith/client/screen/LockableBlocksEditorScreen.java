@@ -6,6 +6,9 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.lwjgl.glfw.GLFW;
+import org.slf4j.Logger;
+import org.z2six.locksmith.Constants;
 import org.z2six.locksmith.network.ReloadLockableBlocksEditorPayload;
 import org.z2six.locksmith.network.SaveLockableBlocksPayload;
 import org.z2six.locksmith.render.profile.LockTargetType;
@@ -19,6 +22,8 @@ import java.util.List;
 import java.util.Locale;
 
 public class LockableBlocksEditorScreen extends Screen {
+    private static final Logger LOG = Constants.LOG;
+
     private static final int BG = 0xF0101216;
     private static final int PANEL = 0xF01A1D24;
     private static final int PANEL_2 = 0xF0222630;
@@ -38,6 +43,17 @@ public class LockableBlocksEditorScreen extends Screen {
     private boolean panningPreview = false;
     private int blockIdTextIndex = -1;
     private String blockIdText = "";
+    private int numericTextIndex = -1;
+    private String numericField = "";
+    private String numericText = "";
+    private boolean numericAllSelected = false;
+    private int listScroll = 0;
+    private int listX;
+    private int listY;
+    private int listW;
+    private int listH;
+    private int listVisibleRows;
+    private boolean scrollSelectedOnNextDraw = true;
     private int previewX;
     private int previewY;
     private int previewW;
@@ -48,11 +64,16 @@ public class LockableBlocksEditorScreen extends Screen {
     private float panX = 0.0F;
     private float panY = 0.0F;
     private boolean multiblockPreview = false;
+    private String lastLoggedPreviewFailure = "";
     private boolean showHelp = false;
 
     public LockableBlocksEditorScreen(List<LockableBlockEntry> entries, List<LockableBlockValidationResult> validation) {
+        this(entries, validation, 0);
+    }
+
+    public LockableBlocksEditorScreen(List<LockableBlockEntry> entries, List<LockableBlockValidationResult> validation, int selectedIndex) {
         super(Component.literal("Locksmith Lockable Blocks"));
-        this.state = new LockableBlocksEditorState(entries, validation);
+        this.state = new LockableBlocksEditorState(entries, validation, selectedIndex);
         ACTIVE = this;
     }
 
@@ -114,11 +135,21 @@ public class LockableBlocksEditorScreen extends Screen {
         gfx.drawString(this.font, "Lockable Blocks", 12, 12, TEXT, false);
         drawTextField(gfx, 12, 31, w - 24, 20, state.filterText, "Filter", focus == Focus.FILTER);
 
-        int y = 60;
+        listX = 8;
+        listY = 60;
+        listW = w - 16;
+        listH = Math.max(0, h - 134);
+        listVisibleRows = Math.max(0, listH / 24);
         List<Integer> visible = state.visibleIndices();
-        for (int visibleRow = 0; visibleRow < visible.size(); visibleRow++) {
+        if (scrollSelectedOnNextDraw) {
+            scrollSelectedIntoView();
+            scrollSelectedOnNextDraw = false;
+        } else {
+            clampListScroll(visible.size());
+        }
+        int y = listY;
+        for (int visibleRow = listScroll; visibleRow < visible.size() && visibleRow < listScroll + listVisibleRows; visibleRow++) {
             int index = visible.get(visibleRow);
-            if (y + 24 > h - 74) break;
             LockableBlockEntry entry = state.workingEntries().get(index);
             LockableBlockValidationResult result = index < state.validationResults().size() ? state.validationResults().get(index) : null;
             boolean selected = index == state.selectedIndex;
@@ -131,6 +162,7 @@ public class LockableBlocksEditorScreen extends Screen {
             addButton("select:" + index, 8, y, w - 16, 22);
             y += 24;
         }
+        drawListScrollbar(gfx, w, visible.size());
 
         int by = h - 64;
         drawButton(gfx, "Add", "add", 12, by, 62, 22, mouseX, mouseY);
@@ -149,7 +181,7 @@ public class LockableBlocksEditorScreen extends Screen {
         gfx.fill(previewX, previewY, previewX + 1, previewY + previewH, LINE);
         gfx.fill(previewX + previewW - 1, previewY, previewX + previewW, previewY + previewH, LINE);
 
-        LockableBlocksPreviewRenderer.render(gfx, previewX, previewY, previewW, previewH, state.selectedEntry(), yaw, pitch, zoom, panX, panY, multiblockPreview);
+        renderPreviewSafely(gfx);
         gfx.drawString(this.font, "LMB rotate   MMB move   SCROLL zoom", previewX + 10, previewY + previewH - 18, MUTED, false);
         drawButton(gfx, "Reset View", "resetView", previewX + previewW - 88, previewY + previewH - 26, 76, 18, mouseX, mouseY);
         LockableBlockEntry selected = state.selectedEntry();
@@ -219,10 +251,26 @@ public class LockableBlocksEditorScreen extends Screen {
     private int drawNudge(GuiGraphics gfx, int mouseX, int mouseY, int panelX, int y, String field, double value, double step) {
         int x = panelX + 14;
         gfx.drawString(this.font, field, x, y + 6, MUTED, false);
-        gfx.drawString(this.font, String.format(Locale.ROOT, "%.3f", value), x + 116, y + 6, TEXT, false);
+        boolean active = focus == Focus.NUMERIC && field.equals(numericField) && numericTextIndex == state.selectedIndex;
+        String text = active ? numericText : formatNumber(value);
+        drawNumericField(gfx, x + 104, y, 82, 20, field, text, active);
         drawButton(gfx, "-", "nudge:" + field + ":" + (-step), x + 198, y, 24, 20, mouseX, mouseY);
         drawButton(gfx, "+", "nudge:" + field + ":" + step, x + 226, y, 24, 20, mouseX, mouseY);
         return y + 24;
+    }
+
+    private void drawNumericField(GuiGraphics gfx, int x, int y, int w, int h, String field, String value, boolean active) {
+        gfx.fill(x, y, x + w, y + h, 0xFF0D1015);
+        gfx.fill(x, y, x + w, y + 1, active ? ACCENT : LINE);
+        gfx.fill(x, y + h - 1, x + w, y + h, active ? ACCENT : LINE);
+        gfx.fill(x, y, x + 1, y + h, active ? ACCENT : LINE);
+        gfx.fill(x + w - 1, y, x + w, y + h, active ? ACCENT : LINE);
+        String rendered = value == null ? "" : value;
+        if (active && !numericAllSelected) {
+            rendered += "_";
+        }
+        gfx.drawString(this.font, trim(rendered, Math.max(6, w / 6)), x + 6, y + 6, TEXT, false);
+        addButton(active ? "fieldActive" : "field:number:" + field, x, y, w, h);
     }
 
     private void drawBottomBar(GuiGraphics gfx, int mouseX, int mouseY, int leftW, int centerW, int rightW, int h) {
@@ -309,20 +357,22 @@ public class LockableBlocksEditorScreen extends Screen {
             return true;
         }
 
-        for (Rect rect : buttons) {
-            if (rect.contains(mouseX, mouseY)) {
-                handleAction(rect.action);
-                return true;
+        if (button == 0) {
+            for (Rect rect : buttons) {
+                if (rect.contains(mouseX, mouseY)) {
+                    handleAction(rect.action);
+                    return true;
+                }
             }
         }
 
         if ((button == 0 || button == 2) && contains(previewX, previewY, previewW, previewH, (int) mouseX, (int) mouseY)) {
             rotatingPreview = button == 0;
             panningPreview = button == 2;
-            focus = Focus.NONE;
+            clearEditorFocus();
             return true;
         }
-        focus = Focus.NONE;
+        clearEditorFocus();
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
@@ -353,6 +403,15 @@ public class LockableBlocksEditorScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (contains(listX, listY, listW, listH, (int) mouseX, (int) mouseY)) {
+            if (scrollY > 0.0D) {
+                listScroll--;
+            } else if (scrollY < 0.0D) {
+                listScroll++;
+            }
+            clampListScroll(state.visibleIndices().size());
+            return true;
+        }
         if (contains(previewX, previewY, previewW, previewH, (int) mouseX, (int) mouseY)) {
             zoom += (float) scrollY * 0.08F;
             if (zoom < 0.45F) zoom = 0.45F;
@@ -366,6 +425,7 @@ public class LockableBlocksEditorScreen extends Screen {
     public boolean charTyped(char codePoint, int modifiers) {
         if (focus == Focus.FILTER) {
             state.filterText += codePoint;
+            listScroll = 0;
             return true;
         }
         if (focus == Focus.BLOCK_ID) {
@@ -374,12 +434,22 @@ public class LockableBlocksEditorScreen extends Screen {
             state.updateSelectedBlockId(blockIdText);
             return true;
         }
+        if (focus == Focus.NUMERIC) {
+            String base = numericAllSelected ? "" : numericText;
+            return trySetNumericText(base + codePoint);
+        }
         return super.charTyped(codePoint, modifiers);
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == 256) {
+        if (focus == Focus.NUMERIC) {
+            if (handleNumericKey(keyCode)) {
+                return true;
+            }
+        }
+
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             if (showHelp) {
                 showHelp = false;
                 return true;
@@ -387,9 +457,10 @@ public class LockableBlocksEditorScreen extends Screen {
             onClose();
             return true;
         }
-        if (keyCode == 259) {
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE) {
             if (focus == Focus.FILTER && !state.filterText.isEmpty()) {
                 state.filterText = state.filterText.substring(0, state.filterText.length() - 1);
+                listScroll = 0;
                 return true;
             }
             if (focus == Focus.BLOCK_ID) {
@@ -404,21 +475,64 @@ public class LockableBlocksEditorScreen extends Screen {
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
+    private boolean handleNumericKey(int keyCode) {
+        if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            refreshNumericDraft();
+            return true;
+        }
+        if (hasControlDown()) {
+            if (keyCode == GLFW.GLFW_KEY_A) {
+                numericAllSelected = true;
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_C) {
+                Minecraft.getInstance().keyboardHandler.setClipboard(numericText);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_X) {
+                Minecraft.getInstance().keyboardHandler.setClipboard(numericText);
+                return trySetNumericText("");
+            }
+            if (keyCode == GLFW.GLFW_KEY_V) {
+                return trySetNumericText(Minecraft.getInstance().keyboardHandler.getClipboard().trim());
+            }
+        }
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE) {
+            if (numericAllSelected) {
+                return trySetNumericText("");
+            }
+            if (!numericText.isEmpty()) {
+                return trySetNumericText(numericText.substring(0, numericText.length() - 1));
+            }
+            return true;
+        }
+        if (keyCode == GLFW.GLFW_KEY_DELETE) {
+            return trySetNumericText("");
+        }
+        return false;
+    }
+
     private void handleAction(String action) {
         if (action == null || action.equals("fieldActive")) return;
         if (action.startsWith("select:")) {
             state.select(Integer.parseInt(action.substring("select:".length())));
-            resetBlockIdDraft();
-            focus = Focus.NONE;
+            resetDrafts();
+            clearEditorFocus();
             return;
         }
         if (action.equals("field:filter")) {
             focus = Focus.FILTER;
+            resetNumericDraft();
             return;
         }
         if (action.equals("field:block")) {
             ensureBlockIdDraft();
             focus = Focus.BLOCK_ID;
+            resetNumericDraft();
+            return;
+        }
+        if (action.startsWith("field:number:")) {
+            focusNumeric(action.substring("field:number:".length()));
             return;
         }
         if (action.startsWith("nudge:")) {
@@ -429,15 +543,30 @@ public class LockableBlocksEditorScreen extends Screen {
                     delta *= 0.2D;
                 }
                 state.nudgeTransform(parts[1], delta);
+                if (focus == Focus.NUMERIC && parts[1].equals(numericField)) {
+                    refreshNumericDraft();
+                }
             }
             return;
         }
         switch (action) {
-            case "add" -> state.addEntry();
-            case "dup" -> state.duplicateSelected();
-            case "remove" -> state.removeSelected();
+            case "add" -> {
+                state.addEntry();
+                scrollSelectedIntoView();
+            }
+            case "dup" -> {
+                state.duplicateSelected();
+                scrollSelectedIntoView();
+            }
+            case "remove" -> {
+                state.removeSelected();
+                scrollSelectedIntoView();
+            }
             case "reset" -> state.resetSelectedTransform();
-            case "discard" -> state.discard();
+            case "discard" -> {
+                state.discard();
+                scrollSelectedIntoView();
+            }
             case "cycleType" -> state.cycleSelectedType();
             case "help" -> showHelp = true;
             case "helpClose" -> showHelp = false;
@@ -449,7 +578,7 @@ public class LockableBlocksEditorScreen extends Screen {
                 panX = 0.0F;
                 panY = 0.0F;
             }
-            case "toggleMultiblock" -> multiblockPreview = !multiblockPreview;
+            case "toggleMultiblock" -> toggleMultiblockPreviewSafely();
             case "save" -> {
                 state.rebuildLocalValidation();
                 PacketDistributor.sendToServer(new SaveLockableBlocksPayload(state.workingEntries()));
@@ -463,9 +592,185 @@ public class LockableBlocksEditorScreen extends Screen {
             default -> {
             }
         }
-        if (action.equals("add") || action.equals("dup") || action.equals("remove")) {
-            resetBlockIdDraft();
+        if (action.equals("add") || action.equals("dup") || action.equals("remove") || action.equals("discard") || action.equals("cycleType") || action.equals("reset")) {
+            resetDrafts();
         }
+    }
+
+    private void toggleMultiblockPreviewSafely() {
+        try {
+            multiblockPreview = !multiblockPreview;
+        } catch (Throwable t) {
+            multiblockPreview = false;
+            LOG.info("[Locksmith][LockableBlocksEditorScreen] Failed to toggle chest preview mode. Falling back to single chest preview.", t);
+        }
+    }
+
+    private void renderPreviewSafely(GuiGraphics gfx) {
+        LockableBlockEntry selected = state.selectedEntry();
+        try {
+            LockableBlocksPreviewRenderer.render(gfx, previewX, previewY, previewW, previewH, selected, yaw, pitch, zoom, panX, panY, multiblockPreview);
+        } catch (Throwable t) {
+            boolean wasMultiblock = multiblockPreview;
+            if (wasMultiblock) {
+                multiblockPreview = false;
+            }
+            logPreviewFailureOnce(selected, wasMultiblock, "primary", t);
+
+            if (wasMultiblock) {
+                try {
+                    LockableBlocksPreviewRenderer.render(gfx, previewX, previewY, previewW, previewH, selected, yaw, pitch, zoom, panX, panY, false);
+                } catch (Throwable fallbackError) {
+                    logPreviewFailureOnce(selected, false, "fallback", fallbackError);
+                }
+            }
+        }
+    }
+
+    private void logPreviewFailureOnce(LockableBlockEntry selected, boolean wasMultiblock, String phase, Throwable t) {
+        String key = phase + "|" + wasMultiblock + "|" + (selected == null ? "<none>" : selected.blockId()) + "|" + (selected == null ? "<none>" : selected.type());
+        if (key.equals(lastLoggedPreviewFailure)) {
+            return;
+        }
+        lastLoggedPreviewFailure = key;
+        LOG.info("[Locksmith][LockableBlocksEditorScreen] Lockable block preview render failed. phase={} block={} type={} multiblockPreview={}. Falling back to single preview where possible.",
+                phase,
+                selected == null ? null : selected.blockId(),
+                selected == null ? null : selected.type(),
+                wasMultiblock,
+                t);
+    }
+
+    private void drawListScrollbar(GuiGraphics gfx, int panelW, int visibleCount) {
+        if (visibleCount <= listVisibleRows || listVisibleRows <= 0 || listH <= 0) {
+            return;
+        }
+        int trackX = panelW - 6;
+        int trackY = listY;
+        int trackH = listVisibleRows * 24 - 2;
+        int thumbH = Math.max(16, trackH * listVisibleRows / visibleCount);
+        int maxScroll = Math.max(1, visibleCount - listVisibleRows);
+        int thumbY = trackY + (trackH - thumbH) * listScroll / maxScroll;
+        gfx.fill(trackX, trackY, trackX + 2, trackY + trackH, 0xFF202631);
+        gfx.fill(trackX, thumbY, trackX + 2, thumbY + thumbH, ACCENT);
+    }
+
+    private void clampListScroll(int visibleCount) {
+        int maxScroll = Math.max(0, visibleCount - Math.max(0, listVisibleRows));
+        if (listScroll < 0) listScroll = 0;
+        if (listScroll > maxScroll) listScroll = maxScroll;
+    }
+
+    private void scrollSelectedIntoView() {
+        List<Integer> visible = state.visibleIndices();
+        int visibleIndex = visible.indexOf(state.selectedIndex);
+        if (visibleIndex < 0) return;
+        if (visibleIndex < listScroll) {
+            listScroll = visibleIndex;
+        } else if (listVisibleRows > 0 && visibleIndex >= listScroll + listVisibleRows) {
+            listScroll = visibleIndex - listVisibleRows + 1;
+        }
+        clampListScroll(visible.size());
+    }
+
+    private void focusNumeric(String field) {
+        numericField = field == null ? "" : field;
+        numericTextIndex = state.selectedIndex;
+        numericText = formatNumber(selectedNumericValue(numericField));
+        numericAllSelected = true;
+        focus = Focus.NUMERIC;
+    }
+
+    private void clearEditorFocus() {
+        focus = Focus.NONE;
+        resetNumericDraft();
+    }
+
+    private void resetDrafts() {
+        resetBlockIdDraft();
+        resetNumericDraft();
+    }
+
+    private void resetNumericDraft() {
+        numericTextIndex = -1;
+        numericField = "";
+        numericText = "";
+        numericAllSelected = false;
+    }
+
+    private void refreshNumericDraft() {
+        if (focus != Focus.NUMERIC || numericField == null || numericField.isEmpty()) {
+            resetNumericDraft();
+            return;
+        }
+        numericTextIndex = state.selectedIndex;
+        numericText = formatNumber(selectedNumericValue(numericField));
+        numericAllSelected = false;
+    }
+
+    private boolean trySetNumericText(String next) {
+        String text = next == null ? "" : next.trim();
+        if (!isAllowedNumericDraft(text)) {
+            return true;
+        }
+        numericText = text;
+        numericTextIndex = state.selectedIndex;
+        numericAllSelected = false;
+        Double parsed = parseNumericDraft(text);
+        if (parsed != null) {
+            state.setTransformField(numericField, parsed);
+        }
+        return true;
+    }
+
+    private double selectedNumericValue(String field) {
+        LockableBlockEntry selected = state.selectedEntry();
+        LockTransform t = selected == null ? LockTransform.genericDefault() : selected.transform();
+        return switch (field) {
+            case "offsetX" -> t.offsetX();
+            case "offsetY" -> t.offsetY();
+            case "offsetZ" -> t.offsetZ();
+            case "rotX" -> t.rotX();
+            case "rotY" -> t.rotY();
+            case "rotZ" -> t.rotZ();
+            case "scale" -> t.scale();
+            case "hingeNudgeLeft" -> t.hingeNudgeLeft();
+            case "hingeNudgeRight" -> t.hingeNudgeRight();
+            case "doubleNudgeX" -> t.doubleNudgeX();
+            default -> 0.0D;
+        };
+    }
+
+    private static boolean isAllowedNumericDraft(String text) {
+        if (text == null || text.isEmpty()) return true;
+        boolean dotSeen = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= '0' && c <= '9') continue;
+            if (c == '.' && !dotSeen) {
+                dotSeen = true;
+                continue;
+            }
+            if ((c == '-' || c == '+') && i == 0) continue;
+            return false;
+        }
+        return true;
+    }
+
+    private static Double parseNumericDraft(String text) {
+        if (text == null || !text.matches("[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)")) {
+            return null;
+        }
+        try {
+            double value = Double.parseDouble(text);
+            return Double.isFinite(value) ? value : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static String formatNumber(double value) {
+        return String.format(Locale.ROOT, "%.3f", value);
     }
 
     private int statusColor(LockableBlockValidationResult result) {
@@ -523,6 +828,7 @@ public class LockableBlocksEditorScreen extends Screen {
     private enum Focus {
         NONE,
         FILTER,
-        BLOCK_ID
+        BLOCK_ID,
+        NUMERIC
     }
 }

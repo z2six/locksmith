@@ -18,7 +18,7 @@ public final class ClientKeyMappings {
             CATEGORY
     );
 
-    private static boolean sneakLockingEnabled = true;
+    private static boolean sneakLockingEnabled = false;
 
     private ClientKeyMappings() {
     }
