@@ -18,6 +18,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.entity.TrappedChestBlockEntity;
@@ -204,13 +205,33 @@ public final class LockableBlocksPreviewRenderer {
             BlockState state,
             BlockPos pos
     ) {
-        BlockEntity chest = state.is(Blocks.TRAPPED_CHEST)
-                ? new TrappedChestBlockEntity(pos, state)
-                : new ChestBlockEntity(pos, state);
+        BlockEntity chest = createPreviewChestBlockEntity(state, pos);
+        if (chest == null) {
+            mc.getBlockRenderer().renderSingleBlock(state, pose, buffer, 0x00F000F0, OverlayTexture.NO_OVERLAY);
+            return;
+        }
         if (mc.level != null) {
             chest.setLevel(mc.level);
         }
         mc.getBlockEntityRenderDispatcher().renderItem(chest, pose, buffer, 0x00F000F0, OverlayTexture.NO_OVERLAY);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static BlockEntity createPreviewChestBlockEntity(BlockState state, BlockPos pos) {
+        Block block = state.getBlock();
+        if (block instanceof EntityBlock entityBlock) {
+            BlockEntity blockEntity = entityBlock.newBlockEntity(pos, state);
+            if (blockEntity != null) {
+                return blockEntity;
+            }
+        }
+        if (state.is(Blocks.TRAPPED_CHEST)) {
+            return new TrappedChestBlockEntity(pos, state);
+        }
+        if (state.is(Blocks.CHEST)) {
+            return new ChestBlockEntity(pos, state);
+        }
+        return null;
     }
 
     private static BlockState normalizedPreviewState(BlockState state, Block block, boolean upperDoorHalf, ChestType chestType) {
